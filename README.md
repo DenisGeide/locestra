@@ -9,6 +9,8 @@ Locestra is a local-first AI orchestration platform for software development. It
 
 Locestra is not another model or just another chat UI. It is the control plane that routes each task to the right model, agent, and tool while keeping ordinary work local and making cloud use explicit.
 
+Locestra is an independent open-source project created and maintained by [DenisGeide](https://github.com/DenisGeide).
+
 > [!WARNING]
 > Locestra is an early development preview for a single trusted user on a Windows workstation. It is not production-ready or multi-user software. Do not expose its services to a LAN or the public Internet. Installation, configuration, APIs, and internal contracts may change.
 
