@@ -1,0 +1,28 @@
+{
+  "$version": 4,
+  "env": {"OLLAMA_API_KEY": "ollama"},
+  "modelProviders": {
+    "openai": [
+      {
+        "id": "local-strong",
+        "name": "Local Strong Qwen3.6 35B",
+        "description": "Gateway coding profile without network MCP tools",
+        "envKey": "OLLAMA_API_KEY",
+        "baseUrl": "http://127.0.0.1:11434/v1",
+        "generationConfig": {
+          "timeout": 600000,
+          "maxRetries": 1,
+          "contextWindowSize": 32768,
+          "modalities": ["text"],
+          "samplingParams": {"temperature": 0.5, "top_p": 0.95, "max_tokens": 4096}
+        }
+      }
+    ]
+  },
+  "security": {"auth": {"selectedType": "openai"}},
+  "model": {"name": "local-strong", "maxToolCalls": 200, "maxToolCallsPerTurn": 50},
+  "tools": {"approvalMode": "auto"},
+  "privacy": {"usageStatisticsEnabled": false},
+  "telemetry": {"enabled": false, "target": "local"},
+  "mcpServers": {}
+}

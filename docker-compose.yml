@@ -1,0 +1,53 @@
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: local-agent-webui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OPEN_WEBUI_PORT:-3000}:8080"
+    environment:
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      OPENAI_API_BASE_URLS: "http://host.docker.internal:${GATEWAY_PORT:-8787}/v1"
+      OPENAI_API_KEYS: "${GATEWAY_API_KEY}"
+      WEBUI_AUTH: "false"
+      ENABLE_SIGNUP: "false"
+      DEFAULT_MODELS: "local-agent-auto"
+      AUDIO_STT_ENGINE: "openai"
+      AUDIO_STT_OPENAI_API_BASE_URL: "http://host.docker.internal:${VOICE_PORT:-8788}/v1"
+      AUDIO_STT_OPENAI_API_KEY: "local-voice"
+      ENABLE_PERSISTENT_CONFIG: "false"
+      ENABLE_AUTOCOMPLETE_GENERATION: "false"
+      ENABLE_FOLLOW_UP_GENERATION: "false"
+      ENABLE_TITLE_GENERATION: "false"
+      ENABLE_TAGS_GENERATION: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - open_webui_data:/app/backend/data
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: local-agent-n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    environment:
+      N8N_HOST: "127.0.0.1"
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: "http"
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: "${TIMEZONE:-UTC}"
+      TZ: "${TIMEZONE:-UTC}"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      GATEWAY_API_KEY: "${GATEWAY_API_KEY}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+
+volumes:
+  open_webui_data:
+  n8n_data:

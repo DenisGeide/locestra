@@ -1,0 +1,67 @@
+[
+  {
+    "id": "a8df5762-6209-48c7-980d-c18269d6c18b",
+    "name": "Local Agent - Automatic Router API",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "local-agent",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [0, 0],
+        "id": "5cc7028e-6f29-4f98-8dc3-f08822840d24",
+        "name": "Task Input",
+        "webhookId": "9dd80596-c0df-498c-96e9-f4ed957d87ee"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:8787/v1/chat/completions",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "={{ 'Bearer ' + $env.GATEWAY_API_KEY }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { model: 'local-agent-auto', messages: [{ role: 'user', content: $json.body.prompt || $json.body.text }] } }}",
+          "options": { "timeout": 1800000 }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [260, 0],
+        "id": "1352d347-2bef-4bf4-b3b1-cc4af6d42822",
+        "name": "Automatic AI Router"
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ { answer: $json.choices[0].message.content, route: $json.local_agent_route || 'fast_chat' } }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.4,
+        "position": [520, 0],
+        "id": "1a66ed76-03ef-45b0-841c-aa7ac1838525",
+        "name": "Return Result"
+      }
+    ],
+    "connections": {
+      "Task Input": { "main": [[{ "node": "Automatic AI Router", "type": "main", "index": 0 }]] },
+      "Automatic AI Router": { "main": [[{ "node": "Return Result", "type": "main", "index": 0 }]] }
+    },
+    "active": false,
+    "settings": { "executionOrder": "v1" },
+    "versionId": "6712734b-0844-45ae-9f83-31048ad274cb",
+    "meta": { "templateCredsSetupCompleted": true },
+    "tags": []
+  }
+]

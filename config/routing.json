@@ -1,0 +1,134 @@
+{
+  "schema_version": "1.0",
+  "policy_version": "2026-07-14.1",
+  "thresholds": {
+    "strong_chat_chars": 700,
+    "high_complexity_markers": 1,
+    "critical_complexity_markers": 1,
+    "local_code_max_attempts": 2,
+    "fast_input_tokens": 6000,
+    "strong_input_tokens": 24000,
+    "agent_input_tokens": 6000,
+    "max_attachment_bytes": 25000000,
+    "max_tool_output_chars": 20000
+  },
+  "planner_routes": [
+    "strong_chat",
+    "local_code",
+    "codex",
+    "docs",
+    "browser",
+    "image",
+    "voice",
+    "vision"
+  ],
+  "rules": {
+    "auxiliary": [
+      "suggest 3-5 relevant follow-up questions based on this chat history",
+      "generate a concise title for this chat",
+      "create 1-3 broad tags for this chat",
+      "create 1-3 broad tags for:",
+      "generate search queries based on this chat",
+      "generate search queries for:"
+    ],
+    "educational": [
+      "how do i", "how can i", "how to", "what does", "what is", "should i",
+      "explain how", "show me how", "как мне", "как создать", "как запустить",
+      "что такое", "что делает", "стоит ли", "объясни как", "покажи как"
+    ],
+    "repository_context": [
+      "repository", "repositories", "repo", "worktree", "codebase", "source tree",
+      "current changes", "diff", "branch", "pull request", "merge", "code review", "this project", "in this project", "project architecture",
+      "этот проект", "в этом проекте", "архитектура проекта",
+      "репозиторий", "репозитории", "кодовая база", "исходники", "текущие изменения",
+      "дифф", "ветка", "перед merge", "перед мердж", "ревью кода"
+    ],
+    "code_targets": [
+      "code", "file", "files", "bug", "bugs", "test", "tests", "dependency", "dependencies", "build",
+      "endpoint", "api", "function", "method", "class", "script", "package", "dockerfile", "refactor",
+      "readme", "vulnerability", "race condition", "deadlock", "schema", "database", "oauth",
+      "authentication", "login", "registration", "user registration", "ci", "pytest", "npm",
+      "feature", "module", "service", "component", "cli", "frontend", "backend", "ui", "query",
+      "sql", "config", "configuration", "workflow", "services", "ruff", "mypy", "linter", "lint",
+      "eslint", "cargo", "cargo check", "pre-commit", "formatting", "formatter", "typecheck",
+      "type check", "static analysis",
+      "код", "файл", "файлы", "баг", "баги", "ошибка", "ошибки", "тест", "тесты", "зависимость",
+      "зависимости", "сборка", "эндпоинт", "функция", "метод", "класс", "скрипт",
+      "пакет", "уязвимость", "гонка данных", "дедлок", "схема", "база данных",
+      "авторизация", "авторизацию", "аутентификация", "аутентификацию", "логин", "вход", "входа",
+      "регистрация", "регистрацию", "линтер", "страница", "страницу",
+      "фронтенд", "бэкенд", "конфиг", "конфигурация", "сервис", "модуль", "компонент", "интерфейс",
+      "запрос", "пайплайн", "форматирование", "форматтер", "тайпчек"
+    ],
+    "read_actions": [
+      "read", "reads", "reading", "find", "finds", "list", "lists", "inspect", "inspects", "inspecting",
+      "locate", "locates", "show", "shows", "trace", "traces", "summarize", "summarizes", "check", "checks",
+      "investigate", "investigates", "diagnose", "diagnoses", "debug", "debugs", "troubleshoot", "root cause",
+      "прочитай", "найди", "перечисли", "проверь", "посмотри", "покажи", "проследи", "исследуй",
+      "диагностируй", "разберись", "отладь", "найди причину"
+    ],
+    "mutation_actions": [
+      "fix", "fixes", "fixing", "create", "creates", "creating", "add", "adds", "adding", "delete", "deletes",
+      "remove", "removes", "modify", "modifies", "edit", "edits", "replace", "replaces", "implement", "implements",
+      "write", "writes", "update", "updates", "updating", "run", "runs", "execute", "executes", "refactor", "refactors",
+      "migrate", "migrates", "commit", "commits", "remediate",
+      "resolve", "apply", "patch", "correct", "install",
+      "check formatting",
+      "исправь", "создай", "добавь", "удали", "измени", "замени", "реализуй", "напиши",
+      "обнови", "запусти", "выполни", "устрани", "почини", "внеси", "примени",
+      "отрефактори", "мигрируй", "закоммить", "установи"
+    ],
+    "review_actions": [
+      "review", "audit", "final review", "security review", "before merge",
+      "проведи ревью", "сделай ревью", "аудит", "финальное ревью", "проверка безопасности"
+    ],
+    "read_only": [
+      "do not modify", "do not change", "do not create", "don't modify", "read only", "read-only",
+      "only report", "audit only", "nothing should be changed", "without changes",
+      "ничего не изменяй", "не изменяй", "не создавай", "изменения не вноси", "исправления не вноси",
+      "только отчёт", "только отчет", "без изменений"
+    ],
+    "docs": [
+      "context7", "official documentation", "official docs", "api reference",
+      "документация context7", "официальная документация", "справка api"
+    ],
+    "browser": [
+      "open http", "open https", "browse http", "browse https", "browser", "playwright",
+      "открой http", "открой https", "браузер"
+    ],
+    "image": [
+      "generate image", "create image", "draw", "comfyui", "generate a picture",
+      "сгенерируй изображение", "создай изображение", "нарисуй", "сделай картинку",
+      "сгенерируй картинку"
+    ],
+    "strong": [
+      "deep analysis", "analyze deeply", "trade-off", "tradeoff", "compare thoroughly",
+      "reason carefully", "strategy", "prove", "design a system", "distributed system",
+      "проанализируй подробно", "глубокий анализ", "сложные компромиссы", "стратегия",
+      "докажи", "спроектируй систему", "спроектируй распределённую систему", "распределённая система",
+      "распределённую систему"
+    ],
+    "architecture": [
+      "architecture", "system design", "distributed", "cross-subsystem", "cross subsystem",
+      "архитектура", "архитектуру", "системный дизайн", "распределённая система",
+      "распределённую систему", "несколько подсистем"
+    ],
+    "high_complexity": [
+      "security", "vulnerability", "migration", "migrate", "concurrency", "race condition",
+      "deadlock", "large refactor", "root cause across", "unknown error", "intermittent", "nondeterministic",
+      "flaky failure", "final review", "production",
+      "безопасность", "уязвимость", "миграция", "мигрируй", "конкурентность", "гонка данных",
+      "дедлок", "большой рефактор", "неизвестная ошибка", "плавающая ошибка", "нестабильный тест",
+      "финальное ревью", "продакшн"
+    ],
+    "critical": [
+      "deploy production", "production database", "force push", "drop database", "delete production",
+      "деплой в продакшн", "production база", "форс пуш", "удали production", "удалить продакшн"
+    ]
+  },
+  "llm_signal": {
+    "enabled": false,
+    "timeout_ms": 750,
+    "minimum_confidence": 0.9
+  }
+}
