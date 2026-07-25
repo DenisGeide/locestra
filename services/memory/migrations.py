@@ -51,7 +51,8 @@ try {
     $stage = 'owner'
     $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
     if ($ownerSid.Value -ne $currentSid.Value) {
-        throw 'private path is not owned by the current identity'
+        $stage = 'claim_owner'
+        $acl.SetOwner($currentSid)
     }
 
     $stage = 'replace'
@@ -140,6 +141,7 @@ try {
         'write' { 45 }
         'verify' { 46 }
         'owner' { 47 }
+        'claim_owner' { 48 }
         default { 49 }
     }
     exit $exitCode
@@ -199,11 +201,12 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                     45: "write",
                     46: "verify",
                     47: "owner",
+                    48: "claim_owner",
                     49: "unknown",
                 }.get(hardened.returncode, "payload")
                 reported = re.search(
                     r"LOCESTRA_ACL_ERROR "
-                    r"stage=(input|identity|read|owner|replace|write|verify|unknown) "
+                    r"stage=(input|identity|read|owner|claim_owner|replace|write|verify|unknown) "
                     r"type=([A-Za-z0-9_.+]+)",
                     hardened.stderr,
                 )
