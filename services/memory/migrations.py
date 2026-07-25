@@ -29,52 +29,107 @@ class BackupVerificationError(MigrationError):
 
 _WINDOWS_PRIVATE_DACL: Final = r"""
 $ErrorActionPreference = 'Stop'
-$target = $env:LOCAL_AGENT_PRIVATE_PATH
-$kind = $env:LOCAL_AGENT_PRIVATE_KIND
-$account = New-Object System.Security.Principal.NTAccount(
-    [Security.Principal.WindowsIdentity]::GetCurrent().Name
-)
-if ($kind -eq 'directory') {
-    $acl = New-Object System.Security.AccessControl.DirectorySecurity
-    $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
-        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $account,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        $inheritance,
-        [System.Security.AccessControl.PropagationFlags]::None,
-        [System.Security.AccessControl.AccessControlType]::Allow
+$stage = 'input'
+try {
+    $target = $env:LOCAL_AGENT_PRIVATE_PATH
+    $kind = $env:LOCAL_AGENT_PRIVATE_KIND
+    if ($kind -notin @('directory', 'file')) {
+        throw 'invalid private path kind'
+    }
+
+    $stage = 'identity'
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    if ($null -eq $currentSid) {
+        throw 'current Windows identity has no SID'
+    }
+
+    $stage = 'read'
+    $acl = Get-Acl -LiteralPath $target
+    $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+    if ($ownerSid.Value -ne $currentSid.Value) {
+        throw 'private path is not owned by the current identity'
+    }
+
+    $stage = 'replace'
+    $acl.SetAccessRuleProtection($true, $false)
+    $existingRules = @(
+        $acl.GetAccessRules(
+            $true,
+            $false,
+            [Security.Principal.SecurityIdentifier]
+        )
     )
-} else {
-    $acl = New-Object System.Security.AccessControl.FileSecurity
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $account,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        [System.Security.AccessControl.AccessControlType]::Allow
+    foreach ($existingRule in $existingRules) {
+        [void]$acl.RemoveAccessRuleSpecific($existingRule)
+    }
+    if ($kind -eq 'directory') {
+        $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            $currentSid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            $inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+    } else {
+        $inheritance = [Security.AccessControl.InheritanceFlags]::None
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
+            $currentSid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+    }
+    [void]$acl.AddAccessRule($rule)
+
+    $stage = 'write'
+    if ($kind -eq 'directory') {
+        [IO.Directory]::SetAccessControl($target, $acl)
+    } else {
+        [IO.File]::SetAccessControl($target, $acl)
+    }
+
+    $stage = 'verify'
+    $observed = Get-Acl -LiteralPath $target
+    $observedOwner = $observed.GetOwner(
+        [Security.Principal.SecurityIdentifier]
     )
-}
-$acl.SetOwner($account)
-$acl.SetAccessRuleProtection($true, $false)
-[void]$acl.AddAccessRule($rule)
-if ($kind -eq 'directory') {
-    [System.IO.Directory]::SetAccessControl($target, $acl)
-} else {
-    [System.IO.File]::SetAccessControl($target, $acl)
-}
-$observed = Get-Acl -LiteralPath $target
-$rules = @($observed.Access)
-if (-not $observed.AreAccessRulesProtected -or $rules.Count -ne 1) {
-    throw 'private DACL verification failed'
-}
-$observedRule = $rules[0]
-if (
-    $observedRule.IsInherited -or
-    $observedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
-    $observedRule.IdentityReference.Value -ne $account.Value -or
-    (($observedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne
-        [System.Security.AccessControl.FileSystemRights]::FullControl)
-) {
-    throw 'private DACL rule verification failed'
+    $rules = @(
+        $observed.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]
+        )
+    )
+    if (
+        $observedOwner.Value -ne $currentSid.Value -or
+        -not $observed.AreAccessRulesProtected -or
+        $rules.Count -ne 1
+    ) {
+        throw 'private DACL verification failed'
+    }
+    $observedRule = $rules[0]
+    if (
+        $observedRule.IsInherited -or
+        $observedRule.AccessControlType -ne
+            [Security.AccessControl.AccessControlType]::Allow -or
+        $observedRule.IdentityReference.Value -ne $currentSid.Value -or
+        $observedRule.InheritanceFlags -ne $inheritance -or
+        $observedRule.PropagationFlags -ne
+            [Security.AccessControl.PropagationFlags]::None -or
+        (($observedRule.FileSystemRights -band
+            [Security.AccessControl.FileSystemRights]::FullControl) -ne
+            [Security.AccessControl.FileSystemRights]::FullControl)
+    ) {
+        throw 'private DACL rule verification failed'
+    }
+} catch {
+    [Console]::Error.WriteLine(
+        'LOCESTRA_ACL_ERROR stage={0} type={1}' -f
+            $stage,
+            $_.Exception.GetType().FullName
+    )
+    exit 1
 }
 """
 
@@ -110,7 +165,15 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                 timeout=30,
             )
             if hardened.returncode != 0:
-                raise OSError("Windows ACL update failed")
+                detail = next(
+                    (
+                        line.strip()[:200]
+                        for line in hardened.stderr.splitlines()
+                        if line.strip().startswith("LOCESTRA_ACL_ERROR ")
+                    ),
+                    "LOCESTRA_ACL_ERROR stage=unknown type=unknown",
+                )
+                raise OSError(f"Windows ACL update failed ({detail})")
     except Exception as exc:
         raise MigrationError("private permission hardening failed") from exc
     return target
