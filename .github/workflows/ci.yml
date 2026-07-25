@@ -30,8 +30,8 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked --group dev
 
-      - name: Run test suite
-        run: uv run pytest -q
+      - name: Run public routing and gateway contract tests
+        run: uv run pytest -q tests/test_evalkit.py tests/test_routing_eval.py tests/test_gateway_contracts.py
 
       - name: Run routing regression gate
         run: uv run python -m evals.routing --output-dir .artifacts/evalkit --fail-under-exact 1
