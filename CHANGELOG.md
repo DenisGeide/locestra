@@ -72,9 +72,8 @@ identifiers, and internal implementation prompts.
 - Added fail-closed base and alias digest checks for the strong Ollama profile.
 - Protected gateway and voice `/v1/*` calls with the same generated bearer;
   heavyweight voice model loading is authenticated as well.
-- Hardened Windows private-storage ACL replacement around immutable SIDs,
-  owner verification, exact grant replacement, and bounded path-free failure
-  diagnostics.
+- Hardened Windows private-storage ACL replacement around immutable current-user
+  SIDs, exact grant replacement, and bounded path-free failure diagnostics.
 - Documented that gateway and voice are Docker-bridge-reachable host listeners,
   while Open WebUI and n8n stay loopback-published. Windows Firewall and router
   port forwarding remain operator-controlled boundaries.

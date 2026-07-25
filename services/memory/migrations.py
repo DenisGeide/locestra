@@ -48,13 +48,6 @@ try {
     $stage = 'read'
     $acl = Get-Acl -LiteralPath $target
 
-    $stage = 'owner'
-    $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
-    if ($ownerSid.Value -ne $currentSid.Value) {
-        $stage = 'claim_owner'
-        $acl.SetOwner($currentSid)
-    }
-
     $stage = 'replace'
     $acl.SetAccessRuleProtection($true, $false)
     $existingRules = @(
@@ -96,9 +89,6 @@ try {
 
     $stage = 'verify'
     $observed = Get-Acl -LiteralPath $target
-    $observedOwner = $observed.GetOwner(
-        [Security.Principal.SecurityIdentifier]
-    )
     $rules = @(
         $observed.GetAccessRules(
             $true,
@@ -107,7 +97,6 @@ try {
         )
     )
     if (
-        $observedOwner.Value -ne $currentSid.Value -or
         -not $observed.AreAccessRulesProtected -or
         $rules.Count -ne 1
     ) {
@@ -140,8 +129,6 @@ try {
         'replace' { 44 }
         'write' { 45 }
         'verify' { 46 }
-        'owner' { 47 }
-        'claim_owner' { 48 }
         default { 49 }
     }
     exit $exitCode
@@ -200,13 +187,11 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                     44: "replace",
                     45: "write",
                     46: "verify",
-                    47: "owner",
-                    48: "claim_owner",
                     49: "unknown",
                 }.get(hardened.returncode, "payload")
                 reported = re.search(
                     r"LOCESTRA_ACL_ERROR "
-                    r"stage=(input|identity|read|owner|claim_owner|replace|write|verify|unknown) "
+                    r"stage=(input|identity|read|replace|write|verify|unknown) "
                     r"type=([A-Za-z0-9_.+]+)",
                     hardened.stderr,
                 )
