@@ -1,0 +1,192 @@
+{
+  "schema_version": "1.0",
+  "benchmark": "locestra-routing",
+  "dataset_version": "routing_v1",
+  "dataset_schema_version": "1.0",
+  "dataset_sha256": "3ef7862fa3804fcee671a9a9eecb36bf84d269cab6c5f2e4a31823b1a94b834b",
+  "policy_version": "2026-07-14.1",
+  "generated_at": "2026-07-25T10:10:09.723602+00:00",
+  "scope": "Deterministic normalizer, planner, and router regression corpus",
+  "summary": {
+    "cases": 117,
+    "route_matches": 117,
+    "exact_matches": 117,
+    "route_accuracy": 1.0,
+    "exact_match_rate": 1.0,
+    "route_macro_f1": 1.0,
+    "latency_ms": {
+      "p50": 0.3326,
+      "p95": 0.54368,
+      "max": 6.7259
+    }
+  },
+  "by_language": {
+    "en": {
+      "cases": 98,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "ru": {
+      "cases": 19,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    }
+  },
+  "by_category": {
+    "analysis": {
+      "cases": 4,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "auxiliary": {
+      "cases": 1,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "browser": {
+      "cases": 2,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "collision_handling": {
+      "cases": 8,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "conversation": {
+      "cases": 23,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "documentation": {
+      "cases": 2,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "image": {
+      "cases": 2,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "permission_boundary": {
+      "cases": 8,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "repository_task": {
+      "cases": 40,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "review_and_escalation": {
+      "cases": 19,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    },
+    "route_override": {
+      "cases": 8,
+      "route_accuracy": 1.0,
+      "exact_match_rate": 1.0
+    }
+  },
+  "route_confusion_matrix": {
+    "labels": [
+      "auxiliary",
+      "browser",
+      "codex",
+      "docs",
+      "fast_chat",
+      "image",
+      "local_code",
+      "strong_chat"
+    ],
+    "matrix": [
+      [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        24,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        24,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        3,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        55,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        4
+      ]
+    ]
+  },
+  "failures": [],
+  "limitations": [
+    "Accuracy is measured only on this fixed regression corpus.",
+    "Latency is machine-dependent and excludes model or tool execution.",
+    "This benchmark does not evaluate RAG, generated-answer quality, or external services."
+  ]
+}

@@ -4,6 +4,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](docs/CURRENT_STATE.md)
+[![CI](https://github.com/DenisGeide/locestra/actions/workflows/ci.yml/badge.svg)](https://github.com/DenisGeide/locestra/actions/workflows/ci.yml)
 
 Locestra is a local-first AI orchestration platform for software development. It connects local LLMs, repository-aware coding agents, scoped memory and knowledge, browser automation, and optional cloud escalation behind one OpenAI-compatible gateway.
 
@@ -23,7 +24,7 @@ This first public snapshot contains the verified work from Stages 000–004:
 - scoped, inspectable long-term memory;
 - repository knowledge, indexing, retrieval, and context envelopes.
 
-Stage 005, the hardened local Qwen/Codex Coding Engine, is under final acceptance and will be published after its live, regression, lifecycle, and UI gates are complete. Stages 006–012 will add managed MCP integrations, a unified tool registry, durable voice and image jobs, interfaces, controlled self-improvement, and versioned evaluations.
+The initial public [Locestra EvalKit](docs/EVALUATION.md) adds a versioned 117-case English/Russian regression benchmark for the deterministic routing path. Stage 005, the hardened local Qwen/Codex Coding Engine, is under final acceptance and will be published after its live, regression, lifecycle, and UI gates are complete. Stages 006–012 will add managed MCP integrations, a unified tool registry, durable voice and image jobs, interfaces, controlled self-improvement, and evaluation suites for those capabilities as they become measurable.
 
 See the [Roadmap](docs/ROADMAP.md) and [Current State](docs/CURRENT_STATE.md) for evidence, limitations, and the difference between implemented, verified, and planned capabilities.
 
@@ -83,6 +84,17 @@ Stop the platform with:
 
 The bootstrap and lifecycle scripts are currently reference-workstation tooling, not a universal installer. Read [Operations](docs/OPERATIONS.md) and [Configuration](docs/CONFIGURATION.md) before use.
 
+## Evaluate routing locally
+
+The routing benchmark is deterministic and does not require models, a GPU, network access, or running services:
+
+```powershell
+uv sync --group dev
+uv run python -m evals.routing --fail-under-exact 1
+```
+
+It reports route accuracy, macro-F1, exact policy-outcome matching, a confusion matrix, language/category slices, and local pipeline latency. The committed corpus is synthetic and contains no user history or private paths. See [Evaluation](docs/EVALUATION.md) for scope, filters, metrics, and limitations.
+
 ## Documentation
 
 - [Current State](docs/CURRENT_STATE.md)
@@ -90,6 +102,7 @@ The bootstrap and lifecycle scripts are currently reference-workstation tooling,
 - [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
 - [Configuration](docs/CONFIGURATION.md)
+- [Evaluation](docs/EVALUATION.md)
 - [Permissions](docs/PERMISSIONS.md)
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Project Charter](docs/PROJECT_CHARTER.md)

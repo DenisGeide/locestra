@@ -44,7 +44,7 @@ def test_ingress_normalization_references_but_does_not_embed_inline_image(tmp_pa
     assert "AAAA" not in serialized
 
 
-def test_route_decision_wraps_existing_classifier_with_current_resources(tmp_path):
+def test_route_decision_wraps_existing_classifier_with_available_resources(tmp_path):
     request = ChatRequest(
         messages=[
             {
@@ -54,7 +54,10 @@ def test_route_decision_wraps_existing_classifier_with_current_resources(tmp_pat
         ]
     )
     normalized = gateway.normalize_request(request, request_id="request-002")
-    decision = gateway.build_route_decision(normalized)
+    decision = gateway.build_route_decision(
+        normalized,
+        capabilities=assumed_capabilities(),
+    )
 
     assert decision.route == "local_code"
     assert decision.executor == "qwen_code"
