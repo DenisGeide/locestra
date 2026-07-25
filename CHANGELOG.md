@@ -61,7 +61,8 @@ identifiers, and internal implementation prompts.
 - Public routing/gateway contracts: `95 passed, 1 skipped`.
 - Deterministic routing EvalKit: `117/117` exact.
 - Foundation, Python compile, critical Ruff, PowerShell parse, lock checks,
-  npm audit, secret scan, and public-data audit passed.
+  owner-only Windows ACL regression, npm audit, secret scan, and public-data
+  audit passed.
 
 ### Release hardening
 
