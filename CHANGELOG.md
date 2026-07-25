@@ -57,7 +57,7 @@ identifiers, and internal implementation prompts.
 
 ### Publication checks
 
-- Portable Coding Engine and MCP Hub gate: `216 passed, 1 skipped`.
+- Portable Coding Engine and MCP Hub gate: `217 passed, 1 skipped`.
 - Public routing/gateway contracts: `95 passed, 1 skipped`.
 - Deterministic routing EvalKit: `117/117` exact.
 - Foundation, Python compile, critical Ruff, PowerShell parse, lock checks,

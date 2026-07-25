@@ -250,9 +250,17 @@ def _load_worktree_json(payload: str, expected_hash: str) -> WorktreeRecordV1:
 
 
 class CodingTaskStore:
-    def __init__(self, database_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        database_path: str | Path | None = None,
+        *,
+        harden_permissions: bool = True,
+    ) -> None:
         self.database_path = Path(database_path or DEFAULT_DATABASE).resolve()
-        migrate_coding_database(self.database_path)
+        migrate_coding_database(
+            self.database_path,
+            harden_permissions=harden_permissions,
+        )
 
     @contextmanager
     def _write(self) -> Iterator[sqlite3.Connection]:

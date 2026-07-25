@@ -11,10 +11,8 @@ permissions:
 
 jobs:
   windows-test:
-    name: Windows Server 2022 reference host
-    # Keep the security reference image explicit. GitHub moved windows-latest
-    # to Server 2025 in 2026, whose hosted-runner temp ACL policy differs.
-    runs-on: windows-2022
+    name: Windows reference host
+    runs-on: windows-latest
     timeout-minutes: 20
 
     steps:
@@ -47,6 +45,11 @@ jobs:
       - name: Run public routing and gateway contract tests
         run: uv run pytest -q tests/test_evalkit.py tests/test_routing_eval.py tests/test_gateway_contracts.py
 
+      - name: Verify owner-only Windows ACL hardening
+        run: |
+          uv run pytest -q -p no:cacheprovider `
+            tests/test_memory_migrations.py::test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance
+
       - name: Run portable Coding Engine and MCP Hub gate
         run: |
           uv run pytest -q --maxfail=1 -p no:cacheprovider -m "not live_qwen and not live_playwright and not live_codex_public" `
@@ -64,11 +67,6 @@ jobs:
             tests/test_coding_engine.py::test_cancelled_executor_preserves_owned_worktree_and_cancellation_evidence `
             tests/test_coding_engine.py::test_unexpected_engine_failure_is_durable_and_preserves_owned_worktree `
             tests/test_coding_engine.py::test_worktree_lease_serializes_concurrent_owners
-
-      - name: Verify owner-only Windows ACL hardening
-        run: |
-          uv run pytest -q -p no:cacheprovider `
-            tests/test_memory_migrations.py::test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance
 
       - name: Run routing regression gate
         run: uv run python -m evals.routing --output-dir .artifacts/evalkit --fail-under-exact 1

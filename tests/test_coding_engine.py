@@ -649,7 +649,10 @@ def _engine(
     semantic: _FakeSemanticReviewer | None = None,
 ) -> tuple[CodingEngine, CodingTaskStore, WorktreeManager, _FakeContextBuilder]:
     policy = _policy()
-    store = CodingTaskStore(fixture.root / "coding-state.sqlite3")
+    store = CodingTaskStore(
+        fixture.root / "coding-state.sqlite3",
+        harden_permissions=False,
+    )
     manager = WorktreeManager(
         registry_root=fixture.root / "engine-registry",
         owned_worktree_root=fixture.root / "engine-worktrees",

@@ -89,7 +89,10 @@ def _isolated_task(
     task_id: str,
     stale: bool = False,
 ) -> tuple[CodingTaskStore, WorktreeManager, CodingTaskStateV1, WorktreeRecordV1]:
-    store = CodingTaskStore(fixture.root / f"{task_id}.sqlite3")
+    store = CodingTaskStore(
+        fixture.root / f"{task_id}.sqlite3",
+        harden_permissions=False,
+    )
     manager = _manager(fixture)
     identity = resolve_repository(str(fixture.repository))
     state = _created_state(identity.canonical_root, task_id)
@@ -149,7 +152,10 @@ def _completed_task(
 
 def test_status_reports_bounded_store_and_registry_health_without_paths_or_owner_tokens(capsys):
     with coding_fixture(run_id="cli-status") as fixture:
-        store = CodingTaskStore(fixture.root / "coding.sqlite3")
+        store = CodingTaskStore(
+            fixture.root / "coding.sqlite3",
+            harden_permissions=False,
+        )
         manager = _manager(fixture)
 
         assert main(["status"], store=store, worktree_manager=manager) == 0
@@ -166,7 +172,10 @@ def test_status_reports_bounded_store_and_registry_health_without_paths_or_owner
 
 def test_status_fails_closed_on_malformed_registry_metadata_without_echoing_it(capsys):
     with coding_fixture(run_id="cli-invalid-registry") as fixture:
-        store = CodingTaskStore(fixture.root / "coding.sqlite3")
+        store = CodingTaskStore(
+            fixture.root / "coding.sqlite3",
+            harden_permissions=False,
+        )
         manager = _manager(fixture)
         synthetic_secret = "sk-" + "fixture-only-not-a-real-credential-1234567890"
         (manager.records_dir / "malformed.json").write_text(
@@ -189,7 +198,10 @@ def test_status_and_recover_reconcile_stale_create_intent_without_unowned_git_st
     monkeypatch: pytest.MonkeyPatch,
 ):
     with coding_fixture(run_id="cli-create-intent-recovery") as fixture:
-        store = CodingTaskStore(fixture.root / "coding.sqlite3")
+        store = CodingTaskStore(
+            fixture.root / "coding.sqlite3",
+            harden_permissions=False,
+        )
         manager = _manager(fixture)
         identity = resolve_repository(str(fixture.repository))
         task_id = "cli-create-crash"

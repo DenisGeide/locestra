@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+import services.coding.migrations as coding_migrations
 
 from services.coding.contracts import (
     CodingMode,
@@ -83,9 +84,42 @@ def _record(state: CodingTaskStateV1, worktree_path: Path, branch: str) -> Workt
     )
 
 
+def test_store_permission_hardening_is_default_and_test_bypass_is_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hardened_paths: list[Path] = []
+
+    def reject_hardening(path: str | Path) -> None:
+        hardened_paths.append(Path(path).resolve())
+        raise OSError("synthetic permission failure")
+
+    monkeypatch.setattr(
+        coding_migrations,
+        "restrict_database_storage",
+        reject_hardening,
+    )
+    protected = tmp_path / "protected" / "coding.sqlite3"
+    with pytest.raises(
+        coding_migrations.CodingMigrationError,
+        match="permission hardening failed",
+    ):
+        CodingTaskStore(protected)
+
+    unit_only = tmp_path / "unit-only" / "coding.sqlite3"
+    store = CodingTaskStore(unit_only, harden_permissions=False)
+
+    assert hardened_paths == [protected.resolve()]
+    assert store.database_path == unit_only.resolve()
+    assert store.database_path.is_file()
+
+
 def test_store_compare_and_swap_and_append_only_event_chain(tmp_path: Path):
     with coding_fixture(run_id="store-cas") as fixture:
-        store = CodingTaskStore(tmp_path / "coding.sqlite3")
+        store = CodingTaskStore(
+            tmp_path / "coding.sqlite3",
+            harden_permissions=False,
+        )
         created = _created_state(fixture.repository, task_id="store-cas-task")
 
         assert store.create(created) == 1
@@ -137,7 +171,10 @@ def test_store_compare_and_swap_and_append_only_event_chain(tmp_path: Path):
 
 def test_store_rejects_invalid_transition_and_request_mutation(tmp_path: Path):
     with coding_fixture(run_id="store-invariants") as fixture:
-        store = CodingTaskStore(tmp_path / "coding.sqlite3")
+        store = CodingTaskStore(
+            tmp_path / "coding.sqlite3",
+            harden_permissions=False,
+        )
         created = _created_state(fixture.repository, task_id="store-invariant-task")
         store.create(created)
 
@@ -158,7 +195,10 @@ def test_store_rejects_invalid_transition_and_request_mutation(tmp_path: Path):
 
 def test_worktree_registry_enforces_identity_live_path_and_state_linkage(tmp_path: Path):
     with coding_fixture(run_id="store-registry") as fixture:
-        store = CodingTaskStore(tmp_path / "coding.sqlite3")
+        store = CodingTaskStore(
+            tmp_path / "coding.sqlite3",
+            harden_permissions=False,
+        )
         first = _created_state(fixture.repository, task_id="registry-one")
         second = _created_state(fixture.repository, task_id="registry-two")
         store.create(first)
