@@ -37,7 +37,7 @@
 
 ## Stage 004 Knowledge/Archive boundary
 
-- Knowledge data хранится в отдельной owner-only SQLite DB и полностью пересоздаётся из явно разрешённых sources; это не active Memory и оно не отправляется cloud executor автоматически.
+- Knowledge data хранится в отдельной current-user-only SQLite DB и полностью пересоздаётся из явно разрешённых sources; это не active Memory и оно не отправляется cloud executor автоматически.
 - Manual import требует exact project/source registration и consent. Repository index читает только Git-tracked paths внутри registered canonical worktree. `.env`, credentials, cookies, keys, databases, model blobs, generated/vendor/runtime directories, binary/non-UTF-8 и secret-bearing payload отклоняются до publication.
 - Standard local linked worktree разрешён только при точной bounded цепочке `.git` pointer → `.git/worktrees/<name>` → local common `.git` → backlink. UNC/device metadata, arbitrary external layout, reparse/hardlink metadata, config includes и object alternates fail closed.
 - Archive/repository text всегда `untrusted` и `local_only`; prompt внутри source не выдаёт permission. Retrieval exact owner/project scoped, budgeted и повторно проверяет current policy/parser/source/tracked state.

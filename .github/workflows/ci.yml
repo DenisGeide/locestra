@@ -45,7 +45,7 @@ jobs:
       - name: Run public routing and gateway contract tests
         run: uv run pytest -q tests/test_evalkit.py tests/test_routing_eval.py tests/test_gateway_contracts.py
 
-      - name: Verify owner-only Windows ACL hardening
+      - name: Verify current-user-only Windows ACL hardening
         run: |
           uv run pytest -q -p no:cacheprovider `
             tests/test_memory_migrations.py::test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance `

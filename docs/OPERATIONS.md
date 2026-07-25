@@ -29,7 +29,7 @@
 powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 ```
 
-Последовательность: runtime directories/config template → генерация/owner-only DACL gateway credential → frozen Python environment + fail-fast config validation → owner-only SQLite storage/migration → Docker engine → host strong Ollama availability → fast Ollama → gateway → voice → optional Telegram → Compose → readiness. Каждый wait имеет deadline. Повторный start принимает уже работающий component только после identity, auth boundary и health check.
+Последовательность: runtime directories/config template → генерация/current-user-only DACL gateway credential → frozen Python environment + fail-fast config validation → current-user-only SQLite storage/migration → Docker engine → host strong Ollama availability → fast Ollama → gateway → voice → optional Telegram → Compose → readiness. Каждый wait имеет deadline. Повторный start принимает уже работающий component только после identity, auth boundary и health check.
 
 Fast Ollama `11435` является platform-owned: matching listener без valid owner/legacy evidence отклоняется, а не принимается как host-owned. Это сохраняет симметрию start/stop; только strong Ollama `11434` имеет external ownership.
 
@@ -107,7 +107,7 @@ is still planned; gateway-local locks must not be described as global.
 
 ## Storage и retention
 
-SQLite, `inbox/`, `outputs/`, logs, `%TEMP%` Codex files и Docker volumes переживают отдельные части lifecycle. Stop не удаляет пользовательские данные. Controlled Memory имеет scoped CLI для retention/export/delete/purge; общего API для task legacy rows, Open WebUI/n8n/inbox/temp всё ещё нет. `data/`, DB/WAL/SHM, backups и файловые memory exports создаются owner-only; невозможность DACL hardening является ошибкой. Перед очисткой требуется точный scope/backup и отдельное разрешение.
+SQLite, `inbox/`, `outputs/`, logs, `%TEMP%` Codex files и Docker volumes переживают отдельные части lifecycle. Stop не удаляет пользовательские данные. Controlled Memory имеет scoped CLI для retention/export/delete/purge; общего API для task legacy rows, Open WebUI/n8n/inbox/temp всё ещё нет. `data/`, DB/WAL/SHM, backups и файловые memory exports создаются current-user-only; невозможность DACL hardening является ошибкой. Перед очисткой требуется точный scope/backup и отдельное разрешение.
 
 ## Обязательная проверка lifecycle change
 

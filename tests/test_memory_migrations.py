@@ -548,7 +548,9 @@ def test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance(
             "-Command",
             r"""
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-foreach ($target in $env:LOCAL_AGENT_ACL_TARGETS.Split([IO.Path]::PathSeparator)) {
+$targets = $env:LOCAL_AGENT_ACL_TARGETS.Split([IO.Path]::PathSeparator)
+for ($index = 0; $index -lt $targets.Count; $index++) {
+    $target = $targets[$index]
     $acl = Get-Acl -LiteralPath $target
     $rules = @(
         $acl.GetAccessRules(
@@ -557,12 +559,22 @@ foreach ($target in $env:LOCAL_AGENT_ACL_TARGETS.Split([IO.Path]::PathSeparator)
             [Security.Principal.SecurityIdentifier]
         )
     )
-    $otherAllows = @($rules | Where-Object {
-        $_.AccessControlType -eq
-            [Security.AccessControl.AccessControlType]::Allow -and
-        $_.IdentityReference.Value -ne $currentSid.Value
-    })
-    if ($otherAllows.Count -ne 0) { exit 7 }
+    if ($rules.Count -ne 1) { exit 7 }
+    $rule = $rules[0]
+    $expectedInherited = $index -eq 2
+    if ($expectedInherited) {
+        if ($acl.AreAccessRulesProtected -or -not $rule.IsInherited) { exit 8 }
+    } else {
+        if (-not $acl.AreAccessRulesProtected -or $rule.IsInherited) { exit 9 }
+    }
+    if (
+        $rule.AccessControlType -ne
+            [Security.AccessControl.AccessControlType]::Allow -or
+        $rule.IdentityReference.Value -ne $currentSid.Value -or
+        (($rule.FileSystemRights -band
+            [Security.AccessControl.FileSystemRights]::FullControl) -ne
+            [Security.AccessControl.FileSystemRights]::FullControl)
+    ) { exit 10 }
 }
 """,
         ],

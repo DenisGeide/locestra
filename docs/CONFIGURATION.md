@@ -22,7 +22,7 @@ code-safe defaults
 Gateway, voice и Telegram используют один `PlatformSettings`. Secret
 `TELEGRAM_BOT_TOKEN` разрешён только в env layer и представлен `SecretStr`;
 committed loader отклоняет его и неизвестные ключи. `GATEWAY_API_KEY` также
-env-only: `start.ps1` генерирует его в ignored owner-only runtime file, а
+env-only: `start.ps1` генерирует его в ignored current-user-only runtime file, а
 gateway, voice, Open WebUI и Telegram используют одно значение для
 OpenAI-compatible `/v1/*` boundary. Config loader не печатает resolved values.
 

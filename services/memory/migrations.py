@@ -45,46 +45,33 @@ try {
         throw 'current Windows identity has no SID'
     }
 
-    $stage = 'read'
-    $acl = Get-Acl -LiteralPath $target
-
-    $stage = 'replace'
-    $acl.SetAccessRuleProtection($true, $false)
-    $existingRules = @(
-        $acl.GetAccessRules(
-            $true,
-            $false,
-            [Security.Principal.SecurityIdentifier]
-        )
-    )
-    foreach ($existingRule in $existingRules) {
-        [void]$acl.RemoveAccessRuleSpecific($existingRule)
-    }
     if ($kind -eq 'directory') {
         $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
             [Security.AccessControl.InheritanceFlags]::ObjectInherit
-        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
-            $currentSid,
-            [Security.AccessControl.FileSystemRights]::FullControl,
-            $inheritance,
-            [Security.AccessControl.PropagationFlags]::None,
-            [Security.AccessControl.AccessControlType]::Allow
-        )
+        $grant = '*' + $currentSid.Value + ':(OI)(CI)(F)'
     } else {
         $inheritance = [Security.AccessControl.InheritanceFlags]::None
-        $rule = [Security.AccessControl.FileSystemAccessRule]::new(
-            $currentSid,
-            [Security.AccessControl.FileSystemRights]::FullControl,
-            [Security.AccessControl.AccessControlType]::Allow
-        )
+        $grant = '*' + $currentSid.Value + ':(F)'
     }
-    [void]$acl.AddAccessRule($rule)
 
-    $stage = 'write'
-    if ($kind -eq 'directory') {
-        [IO.Directory]::SetAccessControl($target, $acl)
-    } else {
-        [IO.File]::SetAccessControl($target, $acl)
+    $stage = 'reset'
+    & icacls.exe $target '/reset' '/Q' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'icacls reset failed'
+    }
+
+    # Install the private explicit grant before removing inherited grants so
+    # the target never has an empty DACL between native operations.
+    $stage = 'grant'
+    & icacls.exe $target '/grant:r' $grant '/Q' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'icacls grant failed'
+    }
+
+    $stage = 'protect'
+    & icacls.exe $target '/inheritance:r' '/Q' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'icacls inheritance protection failed'
     }
 
     $stage = 'verify'
@@ -125,9 +112,9 @@ try {
     $exitCode = switch ($stage) {
         'input' { 41 }
         'identity' { 42 }
-        'read' { 43 }
-        'replace' { 44 }
-        'write' { 45 }
+        'reset' { 43 }
+        'grant' { 44 }
+        'protect' { 45 }
         'verify' { 46 }
         default { 49 }
     }
@@ -183,15 +170,15 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                 stage = {
                     41: "input",
                     42: "identity",
-                    43: "read",
-                    44: "replace",
-                    45: "write",
+                    43: "reset",
+                    44: "grant",
+                    45: "protect",
                     46: "verify",
                     49: "unknown",
                 }.get(hardened.returncode, "payload")
                 reported = re.search(
                     r"LOCESTRA_ACL_ERROR "
-                    r"stage=(input|identity|read|replace|write|verify|unknown) "
+                    r"stage=(input|identity|reset|grant|protect|verify|unknown) "
                     r"type=([A-Za-z0-9_.+]+)",
                     hardened.stderr,
                 )
@@ -208,7 +195,7 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
 
 
 def restrict_private_file(path: str | Path) -> Path:
-    """Replace inherited and explicit grants with one owner-only file DACL."""
+    """Replace inherited and explicit grants with one current-user-only DACL."""
 
     return _restrict_private_path(path, directory=False)
 
