@@ -1,6 +1,7 @@
 # Конфигурация
 
-- Статус: platform contract этапа 001 и immutable routing policy этапа 002.
+- Статус: platform/routing contract plus immutable Stage 005 coding policy and
+  canonical Stage 006 MCP registry.
 - Владелец: `services.config`; Manifest описывает наблюдаемые факты, но не является runtime parser.
 - Коммитить разрешено: public defaults, schema и локальный committed baseline без credentials.
 - Запрещено: `.env`, tokens, cookies, keys и secret values.
@@ -18,7 +19,12 @@ code-safe defaults
 
 `config/platform.json` — versioned committed baseline этой workstation. `.env.example` — шаблон имён, не runtime source. `.env` — ignored runtime override. Process environment имеет наивысший приоритет, что соответствует прежнему `load_dotenv(override=False)` поведению.
 
-Gateway, voice и Telegram используют один `PlatformSettings`. Secret `TELEGRAM_BOT_TOKEN` разрешён только в env layer и представлен `SecretStr`; committed loader отклоняет его и неизвестные ключи. Config loader не печатает resolved values.
+Gateway, voice и Telegram используют один `PlatformSettings`. Secret
+`TELEGRAM_BOT_TOKEN` разрешён только в env layer и представлен `SecretStr`;
+committed loader отклоняет его и неизвестные ключи. `GATEWAY_API_KEY` также
+env-only: `start.ps1` генерирует его в ignored current-user-only runtime file, а
+gateway, voice, Open WebUI и Telegram используют одно значение для
+OpenAI-compatible `/v1/*` boundary. Config loader не печатает resolved values.
 
 Routing semantics намеренно вынесена из этого precedence в отдельный [config/routing.json](../config/routing.json). Это committed, non-secret policy artifact, а не mutable workstation setting: он не читает `.env` и не допускает process-environment overrides. Такой разрыв сделан специально, чтобы одинаковый Git revision и одинаковые input facts давали одинаковый route.
 
@@ -43,6 +49,7 @@ Stage 001 fail-fast исключение: lifecycle-owned ports и Ollama/ComfyU
 | Группа | Ключи | Потребитель |
 |---|---|---|
 | Models | `LOCAL_FAST_MODEL`, `LOCAL_STRONG_MODEL`, `LOCAL_AGENT_MODEL`, `CODEX_MODEL`, `CODEX_REASONING_EFFORT` | gateway/executors |
+| Semantic reviewer identity | `LOCESTRA_OLLAMA_EXECUTABLE`, `LOCESTRA_OLLAMA_EXECUTABLE_SHA256` | coding reviewer/doctor |
 | Endpoints | `OLLAMA_BASE_URL`, `FAST_OLLAMA_BASE_URL`, Telegram gateway/voice URL, `COMFYUI_URL` | adapters |
 | Protected ports | `GATEWAY_PORT`, `VOICE_PORT`, `OPEN_WEBUI_PORT`, `N8N_PORT` | baseline/scripts/Compose |
 | Execution | `DEFAULT_PROJECT`, enable flags, `CODEX_SANDBOX`, `MAX_AUTOMATIC_CHAT_TOOLS` | gateway |
@@ -50,7 +57,28 @@ Stage 001 fail-fast исключение: lifecycle-owned ports и Ollama/ComfyU
 
 Routing rules, thresholds, planner-route allowlist и LLM-signal policy не являются env keys и принадлежат только versioned `config/routing.json`.
 
+`ENABLE_CODEX_EXEC=false` is the portable public default. In this mode Codex
+CLI installation and login are optional: `bootstrap.ps1` continues without
+them, and `doctor.ps1` reports a warning/degraded optional capability rather
+than failing local readiness. Setting `ENABLE_CODEX_EXEC=true` in ignored
+`.env` or the process environment is an explicit operator choice; bootstrap and
+doctor then require both a working Codex CLI and an authenticated session.
+Neither script edits the user's Codex login or global configuration.
+
 Models/endpoints в [SYSTEM_MANIFEST.md](../SYSTEM_MANIFEST.md) должны соответствовать committed baseline и наблюдаемому runtime. Foundation validator проверяет manifest против публичного template; contract tests проверяют precedence, строгий committed envelope, запрет committed secret и fail-fast protected lifecycle override.
+
+The two semantic-review identity variables are optional and must remain empty
+in tracked files. With both unset, the public portable mode discovers Ollama
+and derives SHA-256 from one stable regular local executable. For a
+pre-established production trust anchor, set an absolute executable path and
+its expected SHA-256 in `.env` or the process environment; reviewer and doctor
+then reject any mismatch.
+
+Bootstrap also fails closed on strong-model identity: after pulling
+`qwen3.6:35b` it verifies the pinned base manifest digest before creating
+`local-strong`, then verifies the created alias against
+`config/coding.json`. A changed upstream tag or locally drifted alias is an
+explicit update/evaluation event, not something bootstrap silently accepts.
 
 ## Порты и миграция
 
@@ -67,7 +95,17 @@ Gateway использует два committed immutable profiles:
 
 Qwen может записывать в `QWEN_HOME`, поэтому adapter не направляет CLI в committed directory. Перед запуском он байт-в-байт копирует выбранный profile в ignored writable `run/qwen-homes/qwen-code` или `run/qwen-homes/qwen-docs`, затем передаёт `QWEN_HOME` только Qwen child process. Codex/Node/PowerShell не наследуют этот override.
 
-Code invocation дополнительно использует `--bare`, explicit OpenAI-compatible local endpoint/model и не загружает repository-provided Qwen hooks/extensions/MCP. Docs invocation запускается read-only, с `--allowed-mcp-server-names context7` и всегда в neutral `run/docs-workspace`, не в user project. Runtime flags (`--model`, approval `plan`/`yolo`) имеют приоритет над `settings.json`. `@upstash/context7-mcp@latest` остаётся честно зафиксированным supply-chain drift.
+Stage 005 coding policy lives in `config/coding.json` and has no environment
+override. Coding Qwen receives a generated task-scoped profile with no MCP,
+hooks, extensions, or repository-provided settings.
+
+Stage 006 MCP configuration has one canonical source:
+`config/mcp-registry.json`. Tracked Qwen base profiles contain no MCP
+definitions. Startup or `services.mcp_hub.cli generate` creates ignored runtime
+views: platform Qwen receives local diagnostics, documentation Qwen receives
+the exact Context7 allowlist, and coding Qwen receives none. Context7 and
+Playwright dependencies are exact-version locked; mutable `@latest` definitions
+are not the public source of truth.
 
 ## Docker и host environment
 
@@ -80,5 +118,10 @@ Compose применяет стандартный порядок Docker interpol
 3. Добавить precedence/validation test, а для routing — fixed-corpus regression cases.
 4. Для endpoint/model/port выполнить doctor и relevant E2E.
 5. Не копировать resolved `.env` в report, logs или Git.
+
+For an MCP change, update the canonical registry and dependency lock together,
+then run schema/duplicate validation, generated-view consistency, permission and
+egress review, live discovery/call, failure isolation, and secret/audit checks.
+Do not edit a generated view or global Qwen/Codex profile.
 
 Новый ключ принимается только при наличии реального consumer, default, type/range validation, owner и failure behavior.

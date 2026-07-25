@@ -45,14 +45,5 @@
     "enabled": false,
     "target": "local"
   },
-  "mcpServers": {
-    "context7": {
-      "command": "npx.cmd",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
-    },
-    "playwright": {
-      "command": "npx.cmd",
-      "args": ["-y", "@playwright/mcp@latest", "--headless"]
-    }
-  }
+  "mcpServers": {}
 }

@@ -1,6 +1,8 @@
 # Контракт local ↔ Codex
 
-- Статус: архитектурный контракт; текущий automatic cloud enforcement неполный.
+- Статус: Stage 005 implements a strict public-data-only Codex execution,
+  review, handoff, and resume boundary; a general private-data approval ledger
+  remains incomplete.
 - Владелец: Execution Engine и permission policy; пользователь владеет approval.
 - Граница: Codex CLI запускается локально, но model inference и переданные данные являются cloud processing.
 - Правила: [Permissions](PERMISSIONS.md), [Privacy](../constitution/PRIVACY.md) и [ADR 0002](adr/0002-local-first-and-codex-boundary.md).
@@ -9,7 +11,11 @@
 
 Codex применяется к сложному coding/review, когда локальный путь недостаточен или policy выбирает cloud executor. Capability flag/login не являются approval. Public/non-sensitive fixture может быть разрешён заранее scoped policy; private/sensitive workspace требует явного разрешения на конкретные данные. Secret запрещён всегда.
 
-Текущий gateway создаёт Markdown bundle и при включённом `ENABLE_CODEX_EXEC` может автоматически запустить Codex. Data classification, approval ledger и transfer provenance ещё не enforced, поэтому этот path остаётся известным security gap и не должен использоваться для private/sensitive code без явного разрешения владельца.
+The Stage 005 Coding Engine invokes Codex only when both scoped cloud permission
+and `public` classification are present. Otherwise it creates a local,
+versioned resumable handoff. Private/sensitive repositories are not sent to
+Codex by this contract. Capability flags, installed CLI state, and credentials
+do not grant approval.
 
 ## Handoff envelope v1
 
@@ -55,8 +61,15 @@ stateDiagram-v2
 
 ## Return и проверка
 
-Целевой Execution Engine обязан сохранять executor/model/profile, started/finished time, exit code, returned artifact hashes и unresolved errors. Текущий gateway сохраняет только bounded `TaskStateV1` snapshot (status, attempts, executor, project/worktree, timestamps, generic unresolved error) плюс legacy raw result/metadata; полного return-evidence contract ещё нет. Локальная сторона заново проверяет project path, diff ownership, secret scan, relevant tests и acceptance criteria. Текст «готово» без artifacts не закрывает задачу.
+The Coding Engine records executor/model, attempts, timestamps, returned
+artifact hashes, findings, and unresolved errors in its separate versioned
+state. The local side revalidates project/worktree identity, rules, current
+diff/status/fingerprint, artifact hashes, tests, review, and acceptance
+criteria. The text “done” without evidence cannot close a task.
 
 ## Failure и cleanup
 
-Timeout, CLI failure или запрет cloud не теряют задачу: создаётся `BundleReady`, но это не success. Временный last-message файл должен быть удалён после чтения; bundle/result retention управляется Artifact Store. Текущий runtime оставляет такие файлы и raw bundles без общего TTL — это долг, а не часть целевого контракта.
+Timeout, cancellation, CLI failure, or denied cloud permission cannot become
+success. A versioned handoff may remain ready, but resume revalidates the same
+owned worktree and all evidence. Generated handoff/result artifacts stay in
+ignored task storage and require the operator's retention policy.

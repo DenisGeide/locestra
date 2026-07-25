@@ -122,7 +122,11 @@ _ALLOWED_EXECUTORS_BY_ROUTE: dict[RouteName, set[ExecutorName]] = {
     RouteName.AUXILIARY: {ExecutorName.FAST_OLLAMA, ExecutorName.DEGRADED_RESPONSE},
     RouteName.FAST_CHAT: {ExecutorName.FAST_OLLAMA, ExecutorName.DEGRADED_RESPONSE},
     RouteName.STRONG_CHAT: {ExecutorName.STRONG_OLLAMA, ExecutorName.DEGRADED_RESPONSE},
-    RouteName.LOCAL_CODE: {ExecutorName.QWEN_CODE, ExecutorName.DEGRADED_RESPONSE},
+    RouteName.LOCAL_CODE: {
+        ExecutorName.QWEN_CODE,
+        ExecutorName.CODEX_CLI,
+        ExecutorName.DEGRADED_RESPONSE,
+    },
     RouteName.CODEX: {ExecutorName.CODEX_CLI, ExecutorName.CODEX_BUNDLE, ExecutorName.DEGRADED_RESPONSE},
     RouteName.CODEX_BUNDLE: {ExecutorName.CODEX_BUNDLE},
     RouteName.DOCS: {ExecutorName.QWEN_CODE, ExecutorName.DEGRADED_RESPONSE},

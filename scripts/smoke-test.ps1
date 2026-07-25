@@ -17,10 +17,23 @@ function Invoke-KnowledgeCli([string[]]$KnowledgeArguments) {
     }
 }
 
-Write-Host '[1/8] Python routing tests'
-uv run pytest
+function Invoke-CodingCli([string[]]$CodingArguments) {
+    $output = & uv run --quiet python -m services.coding.cli @CodingArguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Coding CLI exited with code $LASTEXITCODE`: $($output -join [Environment]::NewLine)"
+    }
+    try {
+        return ($output -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        throw "Coding CLI returned invalid JSON: $($output -join [Environment]::NewLine)"
+    }
+}
 
-Write-Host '[2/8] OpenAI-compatible automatic gateway'
+Write-Host '[1/10] Python routing tests'
+uv run pytest
+if ($LASTEXITCODE -ne 0) { throw "pytest failed with exit code $LASTEXITCODE" }
+
+Write-Host '[2/10] OpenAI-compatible automatic gateway'
 $body = @{
     model = 'local-agent-auto'
     messages = @(@{ role='user'; content='Reply with exactly GATEWAY_OK' })
@@ -46,7 +59,7 @@ if (($streamReply.StatusCode -ne 200) -or ($streamReply.Content -notmatch '\[DON
 }
 Write-Host '[PASS] Gateway streaming response'
 
-Write-Host '[3/8] Automatic route matrix'
+Write-Host '[3/10] Automatic route matrix'
 $routeChecks = @{
     fast_chat = 'What is dependency injection?'
     strong_chat = 'Perform a deep analysis of this business strategy and trade-offs'
@@ -64,7 +77,7 @@ foreach ($expected in $routeChecks.Keys) {
 }
 Write-Host '[PASS] Fast, strong, local agent, Codex, and auxiliary routes'
 
-Write-Host '[4/8] Gateway tool calling and strict SSE stream'
+Write-Host '[4/10] Gateway tool calling and strict SSE stream'
 $toolBody = @{
     model = 'local-agent-auto'
     messages = @(@{role='user';content='Use the add tool to add 19 and 23. Do not calculate it yourself.'})
@@ -95,29 +108,87 @@ if ($finalToolEvent.Count -eq 0 -or $events[-1] -notmatch '\[DONE\]') {
 }
 Write-Host '[PASS] Gateway Qwen tool call, stream index, finish reason, and DONE marker'
 
-Write-Host '[5/8] Playwright browser'
+Write-Host '[5/10] Playwright browser'
 $browser = npm run --silent browser:health
 if ($browser -notmatch 'PLAYWRIGHT_OK') { throw 'Playwright semantic test failed' }
 Write-Host '[PASS] Playwright Chromium'
 
-Write-Host '[6/8] Voice model load'
-$voice = Invoke-RestMethod -Uri 'http://127.0.0.1:8788/health?load_model=true' -TimeoutSec 900
+Write-Host '[6/10] Managed MCP Hub'
+$mcpOutput = & uv run --quiet python -m services.mcp_hub.cli doctor --live 2>&1
+if ($LASTEXITCODE -ne 0) { throw "Managed MCP Hub smoke failed: $($mcpOutput -join [Environment]::NewLine)" }
+$mcp = ($mcpOutput -join [Environment]::NewLine) | ConvertFrom-Json
+if (($mcp.status -ne 'ok') -or
+    ($mcp.failure_isolation -ne 'ok') -or
+    ($mcp.lifecycle_cleanup -ne 'ok') -or
+    (@($mcp.unexpected_owners).Count -ne 0) -or
+    (@($mcp.unexpected_managed_processes).Count -ne 0) -or
+    ($mcp.servers.context7.bounded_call -ne 'ok') -or
+    ($mcp.servers.playwright.title_fixture -ne 'ok') -or
+    ($mcp.servers.'local-diagnostics'.bounded_call -ne 'ok')) {
+    throw "Managed MCP Hub smoke contract failed: $($mcp | ConvertTo-Json -Depth 10)"
+}
+Write-Host '[PASS] Context7 documentation, Playwright title fixture and local diagnostics through managed lifecycle'
+
+Write-Host '[7/10] Voice model load'
+$voice = Invoke-RestMethod -Uri 'http://127.0.0.1:8788/health?load_model=true' -Headers $GatewayHeaders -TimeoutSec 900
 if (-not $voice.loaded) { throw 'faster-whisper model did not load' }
 Write-Host "[PASS] faster-whisper $($voice.model) loaded on $($voice.device)"
 
-Write-Host '[7/8] Full gateway-to-Qwen Code edit cycle'
-$Smoke = Join-Path $Root 'smoke-workspace'
-if (Test-Path $Smoke) { Remove-Item -Recurse -Force $Smoke }
-New-Item -ItemType Directory -Path $Smoke | Out-Null
+Write-Host '[8/10] Full gateway-to-Qwen Code edit cycle'
+$SmokeFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("local-agent-coding-smoke-" + [Guid]::NewGuid().ToString('N'))
+$Smoke = Join-Path $SmokeFixtureRoot 'source'
+$SmokeRemote = Join-Path $SmokeFixtureRoot 'remote.git'
+$SmokeCodingTaskId = $null
+$SmokeCleanupComplete = $false
+try {
+New-Item -ItemType Directory -Path $Smoke -Force | Out-Null
 Set-Location $Smoke
-git init -q
+git init -q -b main
+if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the disposable Coding Engine source fixture' }
 git config user.email 'local-agent@localhost'
 git config user.name 'Local Agent Smoke Test'
-Set-Content -Encoding utf8 'README.md' "Create result.txt containing exactly QWEN_CODE_OK and no extra characters."
-git add README.md
+[IO.File]::WriteAllText(
+    (Join-Path $Smoke 'README.md'),
+    "Create result.txt containing exactly QWEN_CODE_OK and no extra characters.`n",
+    [Text.UTF8Encoding]::new($false)
+)
+$SmokeTests = Join-Path $Smoke 'tests'
+New-Item -ItemType Directory -Path $SmokeTests -Force | Out-Null
+$resultVerifier = @'
+import unittest
+from pathlib import Path
+
+
+class ResultContractTests(unittest.TestCase):
+    def test_exact_result_bytes(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        self.assertEqual((repository / "result.txt").read_bytes(), b"QWEN_CODE_OK")
+
+
+if __name__ == "__main__":
+    unittest.main()
+'@
+[IO.File]::WriteAllText(
+    (Join-Path $SmokeTests 'test_result.py'),
+    ($resultVerifier.TrimStart() -replace "`r`n", "`n"),
+    [Text.UTF8Encoding]::new($false)
+)
+git add README.md tests/test_result.py
 git commit -qm 'smoke baseline'
+if ($LASTEXITCODE -ne 0) { throw 'Could not commit the disposable Coding Engine baseline' }
+git init --bare -q $SmokeRemote
+if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the disposable Coding Engine remote' }
+git remote add origin $SmokeRemote
+git push -q -u origin main
+if ($LASTEXITCODE -ne 0) { throw 'Could not publish the disposable baseline to its local remote' }
 $env:QWEN_CODE_SUPPRESS_YOLO_WARNING = '1'
-$baselineCommit = git rev-parse HEAD
+$baselineCommit = (git rev-parse HEAD).Trim()
+$baselineReadmeHash = (Get-FileHash -LiteralPath (Join-Path $Smoke 'README.md') -Algorithm SHA256).Hash
+$baselineRemoteConfiguration = @((git remote -v))
+$baselineRemoteRefs = @((git --git-dir=$SmokeRemote for-each-ref '--format=%(refname)=%(objectname)'))
+if ($LASTEXITCODE -ne 0 -or $baselineRemoteRefs.Count -eq 0) {
+    throw 'Could not snapshot the disposable remote refs'
+}
 Set-Location $Root
 $agentPrompt = @"
 Project: $Smoke
@@ -134,17 +205,143 @@ $agentResponse = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/
 if ($agentResponse.Headers['X-Local-Agent-Route'] -ne 'local_code') {
     throw "Gateway did not use local_code: $($agentResponse.Headers['X-Local-Agent-Route']) $($agentResponse.Content)"
 }
-Set-Location $Smoke
-if (-not (Test-Path 'result.txt')) { throw "Gateway/Qwen Code did not create result.txt. Response: $($agentResponse.Content)" }
-$result = [IO.File]::ReadAllText((Join-Path $Smoke 'result.txt'))
-if ($result -ne 'QWEN_CODE_OK') { throw "Qwen Code wrote unexpected content: $result" }
-$gitChanges = git status --porcelain
-if ($gitChanges -notmatch 'result\.txt') { throw 'Qwen Code change is not visible in git status' }
-if ((git rev-parse HEAD) -ne $baselineCommit) { throw 'Qwen Code created an unexpected commit' }
-Set-Location $Root
-Write-Host '[PASS] Multiline repository request routed through gateway and edited the real workspace without a commit'
+$requestId = [string]$agentResponse.Headers['X-Local-Agent-Request-ID']
+if ([string]::IsNullOrWhiteSpace($requestId)) { throw 'Coding Engine response is missing its request correlation id' }
+$SmokeCodingTaskId = $requestId
+try {
+    $agentPayload = $agentResponse.Content | ConvertFrom-Json
+    $agentContent = [string]$agentPayload.choices[0].message.content
+} catch {
+    throw "Coding Engine returned invalid OpenAI-compatible JSON: $($agentResponse.Content)"
+}
+if ([string]::IsNullOrWhiteSpace($agentContent)) { throw 'Coding Engine response has no assistant content' }
+$worktreeMatch = [regex]::Match($agentContent, '(?m)^Worktree:\s*(?<path>[^\r\n]+?)\s*$')
+if (-not $worktreeMatch.Success) { throw "Coding Engine response did not return a worktree path: $agentContent" }
+$reportedWorktree = $worktreeMatch.Groups['path'].Value.Trim()
+if (-not [IO.Path]::IsPathRooted($reportedWorktree) -or
+    $reportedWorktree -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)') {
+    throw "Coding Engine returned a non-absolute worktree path: $reportedWorktree"
+}
+if ($agentContent -notmatch '(?m)^Modified:\s*result\.txt\s*$' -or
+    $agentContent -notmatch '(?m)^Verification:\s*passed\s*$' -or
+    $agentContent -notmatch '(?m)^Review:\s*approved\s*$') {
+    throw "Coding Engine response did not report the expected verified and independently reviewed change: $agentContent"
+}
 
-Write-Host '[8/8] Scoped Knowledge Engine lifecycle'
+$ownedRootCandidate = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA 'LocalAgent\coding-worktrees'
+} else {
+    Join-Path ([IO.Path]::GetTempPath()) 'LocalAgent\coding-worktrees'
+}
+if (-not (Test-Path -LiteralPath $ownedRootCandidate -PathType Container)) {
+    throw "Coding Engine owned root does not exist: $ownedRootCandidate"
+}
+if (-not (Test-Path -LiteralPath $reportedWorktree -PathType Container)) {
+    throw "Coding Engine returned a missing worktree: $reportedWorktree"
+}
+$ownedRoot = (Get-Item -LiteralPath $ownedRootCandidate -Force).FullName
+$ownedMarkerPath = Join-Path $ownedRoot '.local-agent-owned.json'
+if (-not (Test-Path -LiteralPath $ownedMarkerPath -PathType Leaf)) {
+    throw "Coding Engine owned root marker is missing: $ownedMarkerPath"
+}
+$ownedMarker = Get-Content -LiteralPath $ownedMarkerPath -Raw | ConvertFrom-Json
+$worktree = (Get-Item -LiteralPath $reportedWorktree -Force).FullName
+$ownedPrefix = $ownedRoot.TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+if (-not $worktree.StartsWith($ownedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+    $worktree.Equals($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Coding Engine returned a worktree outside its owned root: $worktree"
+}
+if (($ownedMarker.schema_version -ne '1.0') -or
+    ($ownedMarker.purpose -ne 'local-agent-coding-worktrees') -or
+    (-not ([string]$ownedMarker.canonical_root).Equals($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) -or
+    (-not ([string]$ownedMarker.platform_root).Equals((Get-Item -LiteralPath $Root).FullName, [StringComparison]::OrdinalIgnoreCase))) {
+    throw "Coding Engine owned root marker is invalid: $($ownedMarker | ConvertTo-Json -Depth 4)"
+}
+if ($worktree.Equals((Get-Item -LiteralPath $Smoke).FullName, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Coding Engine edited the source repository instead of an owned worktree'
+}
+$worktreeTopLevel = (git -C $worktree rev-parse --show-toplevel).Trim()
+if ($LASTEXITCODE -ne 0 -or
+    -not (Get-Item -LiteralPath $worktreeTopLevel).FullName.Equals($worktree, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Returned path is not the root of the expected Git worktree: $worktree"
+}
+
+$resultPath = Join-Path $worktree 'result.txt'
+if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+    throw "Gateway/Qwen Code did not create result.txt in the owned worktree. Response: $agentContent"
+}
+$expectedResultBytes = [Text.Encoding]::UTF8.GetBytes('QWEN_CODE_OK')
+$actualResultBytes = [IO.File]::ReadAllBytes($resultPath)
+if ($actualResultBytes.Length -ne $expectedResultBytes.Length -or
+    [Convert]::ToBase64String($actualResultBytes) -ne [Convert]::ToBase64String($expectedResultBytes)) {
+    throw "Qwen Code did not write the exact expected result.txt bytes in $worktree"
+}
+$worktreeChanges = @((git -C $worktree status --porcelain=v1 --untracked-files=all))
+if ($LASTEXITCODE -ne 0 -or $worktreeChanges.Count -ne 1 -or $worktreeChanges[0] -ne '?? result.txt') {
+    throw "Owned worktree contains unexpected changes: $($worktreeChanges -join ', ')"
+}
+if ((git -C $worktree rev-parse HEAD).Trim() -ne $baselineCommit) {
+    throw 'Qwen Code created an unexpected commit in the owned worktree'
+}
+
+$sourceChanges = @((git -C $Smoke status --porcelain=v1 --untracked-files=all))
+if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($sourceChanges -join "`n"))) {
+    throw "Coding Engine changed the source repository: $($sourceChanges -join ', ')"
+}
+if ((git -C $Smoke rev-parse HEAD).Trim() -ne $baselineCommit) {
+    throw 'Coding Engine changed the source repository HEAD'
+}
+if (Test-Path -LiteralPath (Join-Path $Smoke 'result.txt')) {
+    throw 'Coding Engine leaked result.txt into the source repository'
+}
+if ((Get-FileHash -LiteralPath (Join-Path $Smoke 'README.md') -Algorithm SHA256).Hash -ne $baselineReadmeHash) {
+    throw 'Coding Engine changed README.md in the source repository'
+}
+$remoteConfiguration = @((git -C $Smoke remote -v))
+if (@(Compare-Object -ReferenceObject $baselineRemoteConfiguration -DifferenceObject $remoteConfiguration).Count -ne 0) {
+    throw 'Coding Engine altered the source repository remote configuration'
+}
+$remoteRefs = @((git --git-dir=$SmokeRemote for-each-ref '--format=%(refname)=%(objectname)'))
+if ($LASTEXITCODE -ne 0 -or
+    @(Compare-Object -ReferenceObject $baselineRemoteRefs -DifferenceObject $remoteRefs).Count -ne 0) {
+    throw 'Coding Engine changed the remote refs; an unexpected push may have occurred'
+}
+Remove-Item -LiteralPath $resultPath -Force
+$postFixtureCleanupChanges = @((git -C $worktree status --porcelain=v1 --untracked-files=all))
+if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace(($postFixtureCleanupChanges -join "`n"))) {
+    throw "Owned worktree did not become clean after removing the exact verified smoke output: $($postFixtureCleanupChanges -join ', ')"
+}
+$cleanupPreview = Invoke-CodingCli @('cleanup', '--task-id', $SmokeCodingTaskId)
+if (($cleanupPreview.status -ne 'preview') -or (-not $cleanupPreview.eligible) -or $cleanupPreview.applied) {
+    throw "Coding Engine worktree cleanup preview was not eligible: $($cleanupPreview | ConvertTo-Json -Depth 8)"
+}
+$cleanupApplied = Invoke-CodingCli @(
+    'cleanup',
+    '--task-id', $SmokeCodingTaskId,
+    '--confirm', $SmokeCodingTaskId
+)
+if (($cleanupApplied.status -ne 'removed') -or (-not $cleanupApplied.removed) -or ($cleanupApplied.paths_deleted -ne 1)) {
+    throw "Coding Engine worktree cleanup did not remove exactly one owned path: $($cleanupApplied | ConvertTo-Json -Depth 8)"
+}
+$SmokeCleanupComplete = $true
+Set-Location $Root
+Write-Host "[PASS] Gateway request $requestId passed verification and independent semantic review in owned worktree $worktree; source, HEAD, remote config, and remote refs stayed unchanged"
+} finally {
+    Set-Location $Root
+    if ($SmokeCleanupComplete) {
+        $canonicalTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([char[]]'\/') + [IO.Path]::DirectorySeparatorChar
+        $canonicalSmoke = [IO.Path]::GetFullPath($SmokeFixtureRoot)
+        if ((-not $canonicalSmoke.StartsWith($canonicalTemp, [StringComparison]::OrdinalIgnoreCase)) -or
+            (-not (Split-Path -Leaf $canonicalSmoke).StartsWith('local-agent-coding-smoke-', [StringComparison]::Ordinal))) {
+            throw "Refusing unsafe smoke fixture cleanup: $canonicalSmoke"
+        }
+        Remove-Item -LiteralPath $canonicalSmoke -Recurse -Force
+    } else {
+        Write-Warning "Coding smoke fixture was preserved for diagnosis because owned-worktree cleanup did not complete: $SmokeFixtureRoot"
+    }
+}
+
+Write-Host '[9/10] Scoped Knowledge Engine lifecycle'
 $knowledgeSmokeRoot = Join-Path ([IO.Path]::GetTempPath()) ("local-agent-knowledge-smoke-" + [Guid]::NewGuid().ToString('N'))
 try {
     $knowledgeProject = Join-Path $knowledgeSmokeRoot 'project'
@@ -241,5 +438,25 @@ try {
     Set-Location $Root
     Remove-Item -LiteralPath $knowledgeSmokeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+Write-Host '[10/10] Coding Engine operational health'
+$codingStatus = Invoke-CodingCli @('status')
+if (($codingStatus.schema_version -ne '1.0') -or
+    ($codingStatus.command -ne 'status') -or
+    (-not $codingStatus.healthy) -or
+    ($codingStatus.database.schema_version -ne 1) -or
+    ($codingStatus.database.application_id -ne 1279347011) -or
+    ($codingStatus.database.integrity_check -ne 'ok') -or
+    ($codingStatus.database.foreign_key_violations -ne 0) -or
+    (-not $codingStatus.database.event_chain_consistent) -or
+    (-not $codingStatus.ownership_registry.owned_root_marker_valid) -or
+    ($codingStatus.ownership_registry.invalid_records -ne 0) -or
+    ($codingStatus.ownership_registry.stale_active_records -ne 0) -or
+    ($codingStatus.ownership_registry.mirror_missing -ne 0) -or
+    ($codingStatus.ownership_registry.mirror_identity_mismatch -ne 0) -or
+    ($codingStatus.ownership_registry.mirror_status_mismatch -ne 0)) {
+    throw "Coding Engine operational health failed: $($codingStatus | ConvertTo-Json -Depth 8)"
+}
+Write-Host '[PASS] Coding Engine store, event chain, owned registry, and orphan health'
 
 Write-Host 'SMOKE_TEST_OK' -ForegroundColor Green

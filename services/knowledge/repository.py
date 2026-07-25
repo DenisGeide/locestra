@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import threading
+import time
 import tomllib
 from collections import Counter
 from dataclasses import dataclass
@@ -164,6 +165,7 @@ def _git_environment() -> dict[str, str]:
         {
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_REPLACE_OBJECTS": "1",
             "GIT_OPTIONAL_LOCKS": "0",
             "GIT_TERMINAL_PROMPT": "0",
         }
@@ -268,13 +270,23 @@ class GitScope:
     linked_worktree: bool
 
 
+def _metadata_path_is_indirect(path: Path, info: os.stat_result) -> bool:
+    is_junction = getattr(os.path, "isjunction", lambda value: False)
+    return bool(
+        path.is_symlink()
+        or is_junction(path)
+        or getattr(info, "st_reparse_tag", 0)
+        or getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+
+
 def _metadata_entry_is_safe(path: Path, *, regular_file: bool | None = None) -> os.stat_result:
     try:
         info = path.lstat()
     except OSError as exc:
         raise RepositoryError("Git metadata is unreadable") from exc
-    attributes = getattr(info, "st_file_attributes", 0)
-    if path.is_symlink() or attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+    if _metadata_path_is_indirect(path, info):
         raise RepositoryError("reparse Git metadata is not supported")
     if regular_file is True and not stat.S_ISREG(info.st_mode):
         raise RepositoryError("Git metadata file has an invalid type")
@@ -339,14 +351,157 @@ def _validate_metadata_directory_shallow(path: Path, *, max_entries: int = 16_38
             if seen > max_entries:
                 raise RepositoryError("Git metadata boundary exceeds limit")
             try:
-                info = entry.stat(follow_symlinks=False)
+                # ``DirEntry.stat(follow_symlinks=False)`` reports zeroed
+                # inode/link fields on some Windows filesystems.  A direct
+                # lstat is required for the hardlink boundary.
+                info = Path(entry.path).lstat()
             except OSError as exc:
                 raise RepositoryError("Git metadata is unreadable") from exc
-            attributes = getattr(info, "st_file_attributes", 0)
-            if entry.is_symlink() or attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+            if _metadata_path_is_indirect(Path(entry.path), info):
                 raise RepositoryError("reparse Git metadata is not supported")
             if stat.S_ISREG(info.st_mode) and getattr(info, "st_nlink", 1) > 1:
                 raise RepositoryError("hardlinked Git metadata is not supported")
+
+
+def _validate_mutable_metadata_trees(
+    scope: GitScope,
+    *,
+    max_entries: int = 300_000,
+    max_seconds: float = 5.0,
+) -> None:
+    """Boundedly reject indirection in every host-Git mutation namespace."""
+
+    deadline = time.monotonic() + max_seconds
+    seen = 0
+    roots: list[Path] = []
+    for candidate in (
+        scope.common_dir / "refs",
+        scope.common_dir / "logs",
+        scope.common_dir / "worktrees",
+    ):
+        if os.path.lexists(candidate) and candidate not in roots:
+            roots.append(candidate)
+
+    for root in roots:
+        _metadata_entry_is_safe(root, regular_file=False)
+        stack = [root]
+        while stack:
+            if time.monotonic() > deadline:
+                raise RepositoryError("Git mutable metadata validation timed out")
+            directory = stack.pop()
+            _metadata_entry_is_safe(directory, regular_file=False)
+            try:
+                iterator = os.scandir(directory)
+            except OSError as exc:
+                raise RepositoryError("Git mutable metadata is unreadable") from exc
+            with iterator:
+                for entry in iterator:
+                    seen += 1
+                    if seen > max_entries:
+                        raise RepositoryError("Git mutable metadata exceeds entry limit")
+                    if time.monotonic() > deadline:
+                        raise RepositoryError("Git mutable metadata validation timed out")
+                    try:
+                        info = Path(entry.path).lstat()
+                        linked = entry.is_symlink()
+                    except OSError as exc:
+                        raise RepositoryError("Git mutable metadata is unreadable") from exc
+                    if linked or _metadata_path_is_indirect(Path(entry.path), info):
+                        raise RepositoryError("reparse Git mutable metadata is not supported")
+                    if stat.S_ISDIR(info.st_mode):
+                        stack.append(Path(entry.path))
+                    elif stat.S_ISREG(info.st_mode):
+                        if getattr(info, "st_nlink", 1) > 1:
+                            raise RepositoryError(
+                                "hardlinked Git mutable metadata is not supported"
+                            )
+                    else:
+                        raise RepositoryError("Git mutable metadata has an invalid type")
+
+    objects = scope.common_dir / "objects"
+    if os.path.lexists(objects):
+        _metadata_entry_is_safe(objects, regular_file=False)
+        try:
+            iterator = os.scandir(objects)
+        except OSError as exc:
+            raise RepositoryError("Git object metadata is unreadable") from exc
+        with iterator:
+            for entry in iterator:
+                seen += 1
+                if seen > max_entries:
+                    raise RepositoryError("Git mutable metadata exceeds entry limit")
+                if time.monotonic() > deadline:
+                    raise RepositoryError("Git mutable metadata validation timed out")
+                try:
+                    info = Path(entry.path).lstat()
+                    linked = entry.is_symlink()
+                except OSError as exc:
+                    raise RepositoryError("Git object metadata is unreadable") from exc
+                if linked or _metadata_path_is_indirect(Path(entry.path), info):
+                    raise RepositoryError("reparse Git object metadata is not supported")
+                name = entry.name.casefold()
+                if re.fullmatch(r"[0-9a-f]{2}", name):
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise RepositoryError("Git loose-object fanout has an invalid type")
+                    fanout = Path(entry.path)
+                    _metadata_entry_is_safe(fanout, regular_file=False)
+                    try:
+                        fanout_iterator = os.scandir(fanout)
+                    except OSError as exc:
+                        raise RepositoryError("Git loose objects are unreadable") from exc
+                    with fanout_iterator:
+                        for loose in fanout_iterator:
+                            seen += 1
+                            if seen > max_entries:
+                                raise RepositoryError(
+                                    "Git mutable metadata exceeds entry limit"
+                                )
+                            if time.monotonic() > deadline:
+                                raise RepositoryError(
+                                    "Git mutable metadata validation timed out"
+                                )
+                            try:
+                                loose_info = Path(loose.path).lstat()
+                                linked = loose.is_symlink()
+                            except OSError as exc:
+                                raise RepositoryError(
+                                    "Git loose objects are unreadable"
+                                ) from exc
+                            if (
+                                linked
+                                or _metadata_path_is_indirect(
+                                    Path(loose.path), loose_info
+                                )
+                                or not stat.S_ISREG(loose_info.st_mode)
+                            ):
+                                raise RepositoryError(
+                                    "Git loose object has an invalid or indirect type"
+                                )
+                            if getattr(loose_info, "st_nlink", 1) > 1:
+                                raise RepositoryError(
+                                    "hardlinked Git loose objects are not supported"
+                                )
+                elif name in {"info", "pack"}:
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise RepositoryError("Git object metadata has an invalid type")
+                    _validate_metadata_directory_shallow(
+                        Path(entry.path), max_entries=max_entries
+                    )
+                elif not stat.S_ISREG(info.st_mode):
+                    raise RepositoryError("Git object metadata has an invalid type")
+                elif getattr(info, "st_nlink", 1) > 1:
+                    raise RepositoryError("hardlinked Git object metadata is not supported")
+
+    for candidate in (
+        scope.git_dir / "index",
+        scope.git_dir / "index.lock",
+        scope.git_dir / "HEAD",
+        scope.git_dir / "HEAD.lock",
+        scope.common_dir / "packed-refs",
+        scope.common_dir / "packed-refs.lock",
+    ):
+        if os.path.lexists(candidate):
+            _metadata_entry_is_safe(candidate, regular_file=True)
 
 
 def _validate_git_scope(project: Path) -> None:
@@ -384,9 +539,23 @@ def _validate_git_scope(project: Path) -> None:
         scope.common_dir / "objects" / "pack",
     ):
         _validate_metadata_directory_shallow(boundary)
+    _validate_mutable_metadata_trees(scope)
     alternates = scope.common_dir / "objects" / "info" / "alternates"
     if alternates.exists():
         raise RepositoryError("Git object alternates are not supported")
+    grafts = scope.common_dir / "info" / "grafts"
+    if os.path.lexists(grafts):
+        raise RepositoryError("legacy Git grafts are not supported")
+    info_attributes = scope.common_dir / "info" / "attributes"
+    if os.path.lexists(info_attributes):
+        raise RepositoryError("Git info attributes are not supported")
+    replacements = _git(
+        project,
+        ["for-each-ref", "--format=%(refname)", "refs/replace"],
+        max_output_bytes=16_777_216,
+    )
+    if replacements.strip():
+        raise RepositoryError("Git replacement refs are not supported")
     root_raw = _git(project, ["rev-parse", "--show-toplevel"], max_output_bytes=16_384)
     git_dir_raw = _git(project, ["rev-parse", "--absolute-git-dir"], max_output_bytes=16_384)
     common_dir_raw = _git(project, ["rev-parse", "--git-common-dir"], max_output_bytes=16_384)
@@ -404,6 +573,13 @@ def _validate_git_scope(project: Path) -> None:
         or os.path.normcase(str(common_dir)) != os.path.normcase(str(scope.common_dir.resolve(strict=True)))
     ):
         raise RepositoryError("Git-reported metadata does not match the validated worktree")
+
+
+def validate_git_scope(project: Path) -> Path:
+    """Public, read-only validation boundary reused by the Coding Engine."""
+
+    _validate_git_scope(project)
+    return project
 
 
 def tracked_files(
@@ -717,7 +893,6 @@ def _symbols(path: str, payload: bytes) -> list[str]:
 
 def _category(path: str) -> str:
     relative = Path(path)
-    folded = path.casefold()
     if relative.name.casefold() == "agents.md":
         return "instructions"
     if relative.suffix.casefold() == ".md":

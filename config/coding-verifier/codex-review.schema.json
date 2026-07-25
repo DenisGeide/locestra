@@ -1,0 +1,88 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "code_location": {
+            "additionalProperties": false,
+            "properties": {
+              "absolute_file_path": {
+                "type": "string"
+              },
+              "line_range": {
+                "additionalProperties": false,
+                "properties": {
+                  "end": {
+                    "type": "integer"
+                  },
+                  "start": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "start",
+                  "end"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "absolute_file_path",
+              "line_range"
+            ],
+            "type": "object"
+          },
+          "confidence_score": {
+            "type": "number"
+          },
+          "priority": {
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "body",
+          "confidence_score",
+          "priority",
+          "code_location"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "overall_confidence_score": {
+      "type": "number"
+    },
+    "overall_correctness": {
+      "enum": [
+        "patch is correct",
+        "patch is incorrect"
+      ],
+      "type": "string"
+    },
+    "overall_explanation": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "findings",
+    "overall_correctness",
+    "overall_explanation",
+    "overall_confidence_score"
+  ],
+  "type": "object"
+}

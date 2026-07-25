@@ -1,14 +1,17 @@
 # Timeline Knowledge
 
-- Dataset status: только source-backed platform milestones; это не личная история пользователя.
+Dataset status: source-backed platform milestones only. This is not a personal
+history and intentionally omits private commit and request identifiers.
 
-| Date/snapshot | Status | Event | Source |
+| Milestone | Status | Event | Source |
 |---|---|---|---|
-| Stage 000 | verified complete | Governance foundation, Constitution, Charter, Permissions, Manifest и validator. | [Roadmap](../docs/ROADMAP.md) |
-| Stage 001 | verified complete | Current/target architecture, contracts, health и lifecycle gates. | [Roadmap](../docs/ROADMAP.md) |
-| Stage 002 | verified complete | Deterministic Planner/Router, fallback and routing evaluation. | [Current State](../docs/CURRENT_STATE.md#завершено-на-stage-002003) |
-| 2026-07-15 Stage 003 snapshot | verified complete | Controlled Memory Engine, migrations, privacy, scoped CRUD/retrieval/delete. | [Current State](../docs/CURRENT_STATE.md), [Memory Engine](../docs/MEMORY_ENGINE.md) |
-| 2026-07-15 Stage 004 | verified complete | Scoped Knowledge/Archive Engine, repository map, FTS5/rg retrieval, context envelope и explicit Memory candidate boundary проверены full regression/foundation/doctor/smoke и approved scoped live index. | [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md), [Roadmap](../docs/ROADMAP.md) |
-| Stage 005 | planned | Hardened coding workflow/consumer integration. | [Roadmap](../docs/ROADMAP.md) |
-
-Exact Stage 004 commit SHA сообщается в Git handoff. Self-referential commit SHA внутри того же commit не является достоверным source.
+| Stage 000 | Verified complete | Governance foundation, constitution, charter, permissions, manifest, validation | [Roadmap](../docs/ROADMAP.md) |
+| Stage 001 | Verified complete | Architecture, contracts, lifecycle, health, and operational foundation | [Roadmap](../docs/ROADMAP.md) |
+| Stage 002 | Verified complete | Deterministic planner/router and routing evaluation | [Current State](../docs/CURRENT_STATE.md) |
+| Stage 003 | Verified complete | Controlled typed Memory Engine with provenance and retention | [Memory Engine](../docs/MEMORY_ENGINE.md) |
+| Stage 004 | Verified complete | Scoped Knowledge/Archive Engine, repository map, retrieval, and Context Envelope | [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md) |
+| Stage 005 | Verified complete | Hardened local Qwen/Codex Coding Engine, worktree isolation, verification/review, handoff/recovery | [Coding Engine](../docs/CODING_ENGINE.md) |
+| Stage 006 | Verified complete | Managed MCP Hub with Context7, loopback Playwright fixture, local diagnostics, and failure isolation | [MCP Hub](../docs/MCP_HUB.md) |
+| Initial EvalKit/CI | Published groundwork | 117-case deterministic routing corpus and public CI; broader Stage 012 remains planned | [Evaluation](../docs/EVALUATION.md) |
+| Stage 007 | Planned next | Unified Tool/Application Registry | [Roadmap](../docs/ROADMAP.md) |
+| Stages 008–012 | Planned/partial as documented | Voice, image, interfaces, controlled improvement, and broader evaluation | [Roadmap](../docs/ROADMAP.md) |

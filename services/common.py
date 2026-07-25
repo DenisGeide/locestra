@@ -190,6 +190,7 @@ def _build_task_state(
     status: str,
     project_path: str | None,
     now: float,
+    worktree_path: str | None = None,
     route_decision: RouteDecisionV1 | None = None,
     plan: PlanV1 | None = None,
     actual_executor: ExecutorName | None = None,
@@ -324,7 +325,9 @@ def _build_task_state(
         executor=executor,
         project=project_path,
         worktree=(
-            project_path
+            worktree_path
+            if worktree_path is not None
+            else project_path
             if route in {"local_code", "codex", "codex_bundle", "docs"}
             else (existing_state.worktree if existing_state else None)
         ),
@@ -367,6 +370,7 @@ def save_task(
     command_summaries: list[str] | None = None,
     modified_files: list[str] | None = None,
     artifact_refs: list[str] | None = None,
+    worktree_path: str | None = None,
 ) -> None:
     now = time.time()
     with db() as connection:
@@ -380,6 +384,7 @@ def save_task(
             status=status,
             project_path=project_path,
             now=now,
+            worktree_path=worktree_path,
             route_decision=route_decision,
             plan=plan,
             actual_executor=actual_executor,

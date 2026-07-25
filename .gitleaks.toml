@@ -1,0 +1,4 @@
+title = "Locestra gitleaks policy"
+
+[extend]
+useDefault = true

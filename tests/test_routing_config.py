@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from services.orchestration.config import ROUTING_CONFIG_PATH, load_routing_policy
+from services.mcp_hub.config import load_registry, render_qwen_settings
 
 
 def test_committed_routing_policy_is_versioned_bounded_and_deterministic():
@@ -50,7 +51,11 @@ def test_planner_routes_allowlist_controls_plan_creation(tmp_path):
 def test_gateway_qwen_profiles_enforce_route_tool_boundaries():
     root = ROUTING_CONFIG_PATH.parents[1]
     code = json.loads((root / "config" / "qwen-code" / "settings.json").read_text(encoding="utf-8"))
-    docs = json.loads((root / "config" / "qwen-docs" / "settings.json").read_text(encoding="utf-8"))
+    docs_base = json.loads(
+        (root / "config" / "qwen-docs" / "settings.json").read_text(encoding="utf-8")
+    )
+    docs = render_qwen_settings("qwen-docs", load_registry())
 
     assert code["mcpServers"] == {}
+    assert docs_base["mcpServers"] == {}
     assert set(docs["mcpServers"]) == {"context7"}

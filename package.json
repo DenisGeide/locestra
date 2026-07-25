@@ -3,11 +3,19 @@
   "private": true,
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "browser:health": "node services/browser/health.mjs"
+    "browser:health": "node services/browser/health.mjs",
+    "mcp:node-compat": "node scripts/check-mcp-node-compat.mjs"
   },
   "dependencies": {
-    "@playwright/mcp": "latest",
-    "playwright": "latest"
+    "@playwright/mcp": "0.0.78",
+    "@upstash/context7-mcp": "3.2.3",
+    "playwright": "1.62.0-alpha-1783623505000"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.11"
   }
 }

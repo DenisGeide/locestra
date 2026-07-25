@@ -1,0 +1,265 @@
+{
+  "schema_version": "1.0",
+  "policy_version": "2026-07-17.1",
+  "servers": [
+    {
+      "id": "context7",
+      "display_name": "Context7 Documentation",
+      "enabled": true,
+      "configured_state": "on_demand",
+      "version": "3.2.3",
+      "source": {
+        "kind": "npm",
+        "package": "@upstash/context7-mcp",
+        "version": "3.2.3"
+      },
+      "transport": {
+        "kind": "stdio",
+        "runtime": "node",
+        "entrypoint": "node_modules/@upstash/context7-mcp/dist/index.js",
+        "args": [],
+        "neutral_workspace": "run/mcp/workspaces/context7",
+        "runtime_environment_names": []
+      },
+      "consumers": ["qwen_docs", "mcp_hub"],
+      "capabilities": ["current_documentation"],
+      "tools": [
+        {
+          "name": "resolve-library-id",
+          "input_schema_version": "draft-07",
+          "upstream_input_schema_sha256": "8e6eeef9cb886e6b08d64cba10de9b8de224406daf6a286c90ef1bd82f0ea732",
+          "input_schema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "The public documentation question used to rank library results; secrets, personal data and proprietary code are forbidden."
+              },
+              "libraryName": {
+                "type": "string",
+                "description": "The official public library name."
+              }
+            },
+            "required": ["query", "libraryName"],
+            "additionalProperties": false
+          },
+          "output_schema_version": null,
+          "upstream_output_schema_sha256": null,
+          "output_schema": null,
+          "idempotent": true,
+          "call_timeout_seconds": 25,
+          "max_attempts": 2
+        },
+        {
+          "name": "query-docs",
+          "input_schema_version": "draft-07",
+          "upstream_input_schema_sha256": "9c8375fc64a84241291a6af1906bf2a19552a6eb0b1f8c39b4f93a1c4b714c76",
+          "input_schema": {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+              "libraryId": {
+                "type": "string",
+                "description": "An exact public Context7 library identifier returned by resolve-library-id."
+              },
+              "query": {
+                "type": "string",
+                "description": "One bounded public documentation topic; secrets, personal data and proprietary code are forbidden."
+              }
+            },
+            "required": ["libraryId", "query"],
+            "additionalProperties": false
+          },
+          "output_schema_version": null,
+          "upstream_output_schema_sha256": null,
+          "output_schema": null,
+          "idempotent": true,
+          "call_timeout_seconds": 25,
+          "max_attempts": 2
+        }
+      ],
+      "boundary": {
+        "locality": "local_process_external_service",
+        "data_egress": "public_documentation_query_to_context7",
+        "permissions": ["network_public_documentation"],
+        "risk": "medium",
+        "output_trust": "untrusted_external"
+      },
+      "lifecycle": {
+        "startup_timeout_seconds": 15,
+        "readiness_timeout_seconds": 15,
+        "shutdown_timeout_seconds": 5,
+        "circuit_failure_threshold": 3,
+        "circuit_cooldown_seconds": 60
+      },
+      "concurrency": {
+        "max_instances": 1,
+        "resource_lock": "mcp:context7"
+      },
+      "audit": {
+        "log_payloads": false,
+        "log_results": false,
+        "redaction_policy": "metadata_only_v1"
+      }
+    },
+    {
+      "id": "playwright",
+      "display_name": "Playwright UI QA",
+      "enabled": true,
+      "configured_state": "on_demand",
+      "version": "0.0.78",
+      "source": {
+        "kind": "npm",
+        "package": "@playwright/mcp",
+        "version": "0.0.78"
+      },
+      "transport": {
+        "kind": "stdio",
+        "runtime": "node",
+        "entrypoint": "node_modules/@playwright/mcp/cli.js",
+        "args": [
+          "--headless",
+          "--isolated",
+          "--block-service-workers",
+          "--image-responses",
+          "omit",
+          "--output-mode",
+          "stdout",
+          "--snapshot-mode",
+          "none",
+          "--codegen",
+          "none",
+          "--timeout-action",
+          "5000",
+          "--timeout-navigation",
+          "10000"
+        ],
+        "neutral_workspace": "run/mcp/workspaces/playwright",
+        "runtime_environment_names": []
+      },
+      "consumers": ["mcp_hub"],
+      "capabilities": ["loopback_ui_qa"],
+      "tools": [
+        {
+          "name": "browser_navigate",
+          "input_schema_version": "draft-2020-12",
+          "upstream_input_schema_sha256": "2165538e098634780eec628947d795a2619b4d2e3cef0e36d3084ac46abb94f7",
+          "input_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "A loopback HTTP fixture URL."
+              }
+            },
+            "required": ["url"],
+            "additionalProperties": false
+          },
+          "output_schema_version": null,
+          "upstream_output_schema_sha256": null,
+          "output_schema": null,
+          "idempotent": false,
+          "call_timeout_seconds": 20,
+          "max_attempts": 1
+        }
+      ],
+      "boundary": {
+        "locality": "local_ephemeral_browser",
+        "data_egress": "loopback_fixture_only_through_hub",
+        "permissions": ["launch_ephemeral_browser", "network_loopback"],
+        "risk": "medium",
+        "output_trust": "untrusted_page_content"
+      },
+      "lifecycle": {
+        "startup_timeout_seconds": 20,
+        "readiness_timeout_seconds": 20,
+        "shutdown_timeout_seconds": 8,
+        "circuit_failure_threshold": 3,
+        "circuit_cooldown_seconds": 60
+      },
+      "concurrency": {
+        "max_instances": 1,
+        "resource_lock": "mcp:playwright"
+      },
+      "audit": {
+        "log_payloads": false,
+        "log_results": false,
+        "redaction_policy": "metadata_only_v1"
+      }
+    },
+    {
+      "id": "local-diagnostics",
+      "display_name": "Local MCP Registry Diagnostics",
+      "enabled": true,
+      "configured_state": "on_demand",
+      "version": "1.0.0",
+      "source": {
+        "kind": "project",
+        "package": "services.mcp_hub.local_diagnostics",
+        "version": "1.0.0"
+      },
+      "transport": {
+        "kind": "stdio",
+        "runtime": "python_module",
+        "entrypoint": "services.mcp_hub.local_diagnostics",
+        "args": [],
+        "neutral_workspace": "run/mcp/workspaces/local-diagnostics",
+        "runtime_environment_names": []
+      },
+      "consumers": ["qwen_platform", "mcp_hub"],
+      "capabilities": ["mcp_registry_diagnostics"],
+      "tools": [
+        {
+          "name": "mcp_registry_status",
+          "input_schema_version": "draft-2020-12",
+          "upstream_input_schema_sha256": "e853c57581cf8be36ae5649946e94ca81a768ee9eb108d36b9a10c28f8eb7c7d",
+          "input_schema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "output_schema_version": "1.0",
+          "upstream_output_schema_sha256": "144f33859446fa0ed609f91f5ee934289bb8ad288405ff08c0efab4958814a49",
+          "output_schema": {
+            "type": "object",
+            "required": ["schema_version", "policy_version", "servers"],
+            "properties": {
+              "schema_version": {"type": "string"},
+              "policy_version": {"type": "string"},
+              "servers": {"type": "array"}
+            },
+            "additionalProperties": false
+          },
+          "idempotent": true,
+          "call_timeout_seconds": 8,
+          "max_attempts": 1
+        }
+      ],
+      "boundary": {
+        "locality": "local_only",
+        "data_egress": "none",
+        "permissions": ["read_bounded_mcp_registry_state"],
+        "risk": "low",
+        "output_trust": "trusted_bounded_local_metadata"
+      },
+      "lifecycle": {
+        "startup_timeout_seconds": 10,
+        "readiness_timeout_seconds": 10,
+        "shutdown_timeout_seconds": 5,
+        "circuit_failure_threshold": 3,
+        "circuit_cooldown_seconds": 30
+      },
+      "concurrency": {
+        "max_instances": 1,
+        "resource_lock": "mcp:local-diagnostics"
+      },
+      "audit": {
+        "log_payloads": false,
+        "log_results": false,
+        "redaction_policy": "metadata_only_v1"
+      }
+    }
+  ]
+}

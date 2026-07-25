@@ -21,10 +21,36 @@
   },
   "security": {"auth": {"selectedType": "openai"}},
   "model": {"name": "local-strong", "maxToolCalls": 200, "maxToolCallsPerTurn": 50},
-  "tools": {"approvalMode": "auto"},
+  "tools": {
+    "approvalMode": "plan",
+    "core": ["todo_write"],
+    "exclude": [
+      "todo_write",
+      "agent",
+      "skill",
+      "exit_plan_mode",
+      "enter_plan_mode",
+      "ask_user_question",
+      "create_sub_session",
+      "task_stop",
+      "task_create",
+      "task_update",
+      "task_list",
+      "team_create",
+      "team_delete",
+      "team_plan_approval",
+      "send_message",
+      "structured_output",
+      "tool_search",
+      "enter_worktree",
+      "exit_worktree",
+      "workflow",
+      "artifact",
+      "record_artifact"
+    ]
+  },
+  "experimental": {"cron": false, "agentTeam": false, "artifact": false},
   "privacy": {"usageStatisticsEnabled": false},
   "telemetry": {"enabled": false, "target": "local"},
-  "mcpServers": {
-    "context7": {"command": "npx.cmd", "args": ["-y", "@upstash/context7-mcp@latest"]}
-  }
+  "mcpServers": {}
 }

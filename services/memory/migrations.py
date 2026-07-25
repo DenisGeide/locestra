@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -29,54 +31,109 @@ class BackupVerificationError(MigrationError):
 
 _WINDOWS_PRIVATE_DACL: Final = r"""
 $ErrorActionPreference = 'Stop'
-$target = $env:LOCAL_AGENT_PRIVATE_PATH
-$kind = $env:LOCAL_AGENT_PRIVATE_KIND
-$account = New-Object System.Security.Principal.NTAccount(
-    [Security.Principal.WindowsIdentity]::GetCurrent().Name
-)
-if ($kind -eq 'directory') {
-    $acl = New-Object System.Security.AccessControl.DirectorySecurity
-    $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
-        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $account,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        $inheritance,
-        [System.Security.AccessControl.PropagationFlags]::None,
-        [System.Security.AccessControl.AccessControlType]::Allow
+$stage = 'input'
+try {
+    $target = $env:LOCAL_AGENT_PRIVATE_PATH
+    $kind = $env:LOCAL_AGENT_PRIVATE_KIND
+    if ($kind -notin @('directory', 'file')) {
+        throw 'invalid private path kind'
+    }
+
+    $stage = 'identity'
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    if ($null -eq $currentSid) {
+        throw 'current Windows identity has no SID'
+    }
+
+    if ($kind -eq 'directory') {
+        $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $grant = '*' + $currentSid.Value + ':(OI)(CI)(F)'
+    } else {
+        $inheritance = [Security.AccessControl.InheritanceFlags]::None
+        $grant = '*' + $currentSid.Value + ':(F)'
+    }
+
+    $stage = 'reset'
+    & icacls.exe $target '/reset' '/Q' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'icacls reset failed'
+    }
+
+    # Install the private explicit grant before removing inherited grants so
+    # the target never has an empty DACL between native operations.
+    $stage = 'grant'
+    & icacls.exe $target '/grant:r' $grant '/Q' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'icacls grant failed'
+    }
+
+    $stage = 'protect'
+    & icacls.exe $target '/inheritance:r' '/Q' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'icacls inheritance protection failed'
+    }
+
+    $stage = 'verify'
+    $observed = Get-Acl -LiteralPath $target
+    $rules = @(
+        $observed.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]
+        )
     )
-} else {
-    $acl = New-Object System.Security.AccessControl.FileSecurity
-    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $account,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        [System.Security.AccessControl.AccessControlType]::Allow
+    if (
+        -not $observed.AreAccessRulesProtected -or
+        $rules.Count -ne 1
+    ) {
+        throw 'private DACL verification failed'
+    }
+    $observedRule = $rules[0]
+    if (
+        $observedRule.IsInherited -or
+        $observedRule.AccessControlType -ne
+            [Security.AccessControl.AccessControlType]::Allow -or
+        $observedRule.IdentityReference.Value -ne $currentSid.Value -or
+        $observedRule.InheritanceFlags -ne $inheritance -or
+        $observedRule.PropagationFlags -ne
+            [Security.AccessControl.PropagationFlags]::None -or
+        (($observedRule.FileSystemRights -band
+            [Security.AccessControl.FileSystemRights]::FullControl) -ne
+            [Security.AccessControl.FileSystemRights]::FullControl)
+    ) {
+        throw 'private DACL rule verification failed'
+    }
+} catch {
+    $exceptionType = $_.Exception.GetType().FullName
+    [Console]::Error.WriteLine(
+        "LOCESTRA_ACL_ERROR stage=$stage type=$exceptionType"
     )
-}
-$acl.SetOwner($account)
-$acl.SetAccessRuleProtection($true, $false)
-[void]$acl.AddAccessRule($rule)
-if ($kind -eq 'directory') {
-    [System.IO.Directory]::SetAccessControl($target, $acl)
-} else {
-    [System.IO.File]::SetAccessControl($target, $acl)
-}
-$observed = Get-Acl -LiteralPath $target
-$rules = @($observed.Access)
-if (-not $observed.AreAccessRulesProtected -or $rules.Count -ne 1) {
-    throw 'private DACL verification failed'
-}
-$observedRule = $rules[0]
-if (
-    $observedRule.IsInherited -or
-    $observedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
-    $observedRule.IdentityReference.Value -ne $account.Value -or
-    (($observedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne
-        [System.Security.AccessControl.FileSystemRights]::FullControl)
-) {
-    throw 'private DACL rule verification failed'
+    $exitCode = switch ($stage) {
+        'input' { 41 }
+        'identity' { 42 }
+        'reset' { 43 }
+        'grant' { 44 }
+        'protect' { 45 }
+        'verify' { 46 }
+        default { 49 }
+    }
+    exit $exitCode
 }
 """
+_WINDOWS_PRIVATE_DACL_ENCODED: Final = base64.b64encode(
+    _WINDOWS_PRIVATE_DACL.encode("utf-16-le")
+).decode("ascii")
+
+
+def _windows_powershell_executable() -> str:
+    for name in ("pwsh.exe", "powershell.exe"):
+        candidate = shutil.which(name)
+        if candidate:
+            resolved = Path(candidate).resolve(strict=True)
+            if resolved.is_file():
+                return str(resolved)
+    raise MigrationError("Windows PowerShell executable is unavailable")
 
 
 def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
@@ -95,13 +152,13 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
             )
             hardened = subprocess.run(
                 [
-                    "powershell.exe",
+                    _windows_powershell_executable(),
                     "-NoProfile",
                     "-NonInteractive",
                     "-ExecutionPolicy",
                     "Bypass",
-                    "-Command",
-                    _WINDOWS_PRIVATE_DACL,
+                    "-EncodedCommand",
+                    _WINDOWS_PRIVATE_DACL_ENCODED,
                 ],
                 check=False,
                 capture_output=True,
@@ -110,14 +167,35 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                 timeout=30,
             )
             if hardened.returncode != 0:
-                raise OSError("Windows ACL update failed")
+                stage = {
+                    41: "input",
+                    42: "identity",
+                    43: "reset",
+                    44: "grant",
+                    45: "protect",
+                    46: "verify",
+                    49: "unknown",
+                }.get(hardened.returncode, "payload")
+                reported = re.search(
+                    r"LOCESTRA_ACL_ERROR "
+                    r"stage=(input|identity|reset|grant|protect|verify|unknown) "
+                    r"type=([A-Za-z0-9_.+]+)",
+                    hardened.stderr,
+                )
+                exception_type = (
+                    reported.group(2)[:120] if reported is not None else "unreported"
+                )
+                detail = (
+                    f"LOCESTRA_ACL_ERROR stage={stage} type={exception_type}"
+                )
+                raise OSError(f"Windows ACL update failed ({detail})")
     except Exception as exc:
         raise MigrationError("private permission hardening failed") from exc
     return target
 
 
 def restrict_private_file(path: str | Path) -> Path:
-    """Replace inherited and explicit grants with one owner-only file DACL."""
+    """Replace inherited and explicit grants with one current-user-only DACL."""
 
     return _restrict_private_path(path, directory=False)
 

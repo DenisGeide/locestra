@@ -13,7 +13,7 @@
     "OPEN_WEBUI_PORT": 3737,
     "N8N_PORT": 5678,
     "ENABLE_LOCAL_CODE_EXEC": true,
-    "ENABLE_CODEX_EXEC": true,
+    "ENABLE_CODEX_EXEC": false,
     "CODEX_SANDBOX": "workspace-write",
     "WHISPER_MODEL": "large-v3-turbo",
     "WHISPER_DEVICE": "cpu",

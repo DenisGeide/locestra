@@ -1,16 +1,25 @@
 # Tools Knowledge
 
-- Dataset status: source-backed platform/tool observations; versions отражают только дату соответствующего manifest snapshot.
+Dataset status: source-backed capability inventory. Availability does not grant
+permission. Exact installed versions can differ by checkout/reference host;
+locked project sources and current doctor output take precedence.
 
-| Tool/capability | Status | Fact | Source |
+| Tool/capability | Public status | Boundary | Source |
 |---|---|---|---|
-| Project Python | verified at Stage 003 snapshot | Python 3.12.13 в project environment. | [System Manifest](../SYSTEM_MANIFEST.md#toolchain-and-integrations) |
-| uv | verified at Stage 003 snapshot | Version 0.10.11; canonical Python test/CLI launcher. | [System Manifest](../SYSTEM_MANIFEST.md#toolchain-and-integrations) |
-| Git | verified at Stage 003 snapshot | Version 2.52.0.windows.1. | [System Manifest](../SYSTEM_MANIFEST.md#toolchain-and-integrations) |
-| SQLite FTS5 | implemented for Stage 004 | Lexical bounded fragment candidate search в отдельной knowledge database. | [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md#retrieval-contract), `services/knowledge/migrations.py` |
-| ripgrep | discovered implementation dependency | Используется как fixed-string fallback только по approved paths свежей repository map; фактическая availability проверяется runtime command. | [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md#retrieval-contract), `services/knowledge/repository.py` |
-| Qwen Code | verified at Stage 003 snapshot | CLI 0.19.10; current local coding executor, но Stage 004 Context Envelope ещё не подключён к gateway. | [System Manifest](../SYSTEM_MANIFEST.md#toolchain-and-integrations), [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md#назначение-и-строгие-границы) |
-| Codex CLI | verified login/CLI at Stage 003 snapshot | CLI 0.144.1; cloud execution остаётся approval-gated. | [System Manifest](../SYSTEM_MANIFEST.md#toolchain-and-integrations) |
-| Vector database/embedding service | not installed by Stage 004 | Намеренно deferred до measured retrieval eval. | [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md#retrieval-contract) |
+| Qwen Code | Verified Stage 005 executor | Primary local coding agent inside an owned task container; coding profile has no MCP | [Coding Engine](../docs/CODING_ENGINE.md) |
+| Codex CLI | Verified Stage 005 optional executor/reviewer | Explicit approval plus public classification; otherwise local handoff | [Codex Handoff](../docs/CODEX_HANDOFF.md) |
+| Git linked worktrees | Verified Stage 005 isolation | Exact owned task worktree outside source checkout; no path-guess cleanup | [Coding Engine](../docs/CODING_ENGINE.md) |
+| Docker verifier recipes | Verified Stage 005 | Pinned, bounded supported test/build recipes; no host fallback | [Coding Engine](../docs/CODING_ENGINE.md) |
+| Playwright UI verifier | Verified Stage 005 | Exact-origin UI evidence inside coding workflow | [Coding Engine](../docs/CODING_ENGINE.md) |
+| Context7 MCP `3.2.3` | Verified Stage 006 | Public documentation egress only | [MCP Hub](../docs/MCP_HUB.md) |
+| Playwright MCP `0.0.78` | Verified Stage 006 | Hub-owned loopback fixture title only | [MCP Hub](../docs/MCP_HUB.md) |
+| Local diagnostics MCP `1.0.0` | Verified Stage 006 | Bounded registry/health metadata; no network/path/command input | [MCP Hub](../docs/MCP_HUB.md) |
+| Direct browser adapter | Verified existing route | Separate public-target/DNS/redirect/subrequest policy; not MCP fallback | [Routing](../docs/ROUTING.md) |
+| SQLite FTS5/ripgrep | Verified Knowledge implementation | Bounded retrieval over approved fresh repository-map paths | [Knowledge Engine](../docs/KNOWLEDGE_ENGINE.md) |
+| faster-whisper | Existing foundation | Local transcription compatibility; durable Stage 008 jobs remain planned | [Current State](../docs/CURRENT_STATE.md) |
+| ComfyUI | Existing foundation | Local on-demand images; hardened Stage 009 workflow remains planned | [Current State](../docs/CURRENT_STATE.md) |
 
-Manifest и live health имеют приоритет над этой derived сводкой. Tool availability не даёт permission на вызов.
+Filesystem, shell, Git, and generic memory MCP servers are intentionally absent:
+they would duplicate narrower native contracts. GitHub, image, document, and
+messaging MCPs remain deferred until a consumer and bounded end-to-end workflow
+justify them.

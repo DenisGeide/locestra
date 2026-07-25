@@ -27,11 +27,47 @@ jobs:
       - name: Install uv
         run: python -m pip install uv
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
       - name: Install locked dependencies
         run: uv sync --locked --group dev
 
+      - name: Validate locked MCP dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=low
+          npm run mcp:node-compat
+
       - name: Run public routing and gateway contract tests
         run: uv run pytest -q tests/test_evalkit.py tests/test_routing_eval.py tests/test_gateway_contracts.py
+
+      - name: Verify current-user-only Windows ACL hardening
+        run: |
+          uv run pytest -q -p no:cacheprovider `
+            tests/test_memory_migrations.py::test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance `
+            tests/test_memory_migrations.py::test_private_acl_failure_diagnostic_is_bounded_and_path_free
+
+      - name: Run portable Coding Engine and MCP Hub gate
+        run: |
+          uv run pytest -q --maxfail=1 -p no:cacheprovider -m "not live_qwen and not live_playwright and not live_codex_public" `
+            tests/test_coding_config_contracts.py `
+            tests/test_config.py `
+            tests/test_coding_store.py `
+            tests/test_coding_context_handoff.py `
+            tests/test_coding_process_artifacts.py `
+            tests/test_coding_semantic_review.py `
+            tests/test_gateway_coding_engine.py `
+            tests/test_mcp_hub.py `
+            tests/test_voice_auth.py `
+            tests/test_coding_engine.py::test_semantic_command_artifact_lookup_accepts_typed_ui_evidence `
+            tests/test_coding_engine.py::test_read_only_engine_inspects_without_project_command_or_file_change `
+            tests/test_coding_engine.py::test_cancelled_executor_preserves_owned_worktree_and_cancellation_evidence `
+            tests/test_coding_engine.py::test_unexpected_engine_failure_is_durable_and_preserves_owned_worktree `
+            tests/test_coding_engine.py::test_worktree_lease_serializes_concurrent_owners
 
       - name: Run routing regression gate
         run: uv run python -m evals.routing --output-dir .artifacts/evalkit --fail-under-exact 1

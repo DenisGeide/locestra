@@ -1,6 +1,8 @@
 # Versioned contracts v1
 
-- Статус: реализованный machine boundary этапа 001, расширенный backward-compatible optional полями Planner/Router этапа 002.
+- Статус: core v1 boundary remains compatible; Stages 005–006 add separate
+  versioned Coding Engine and MCP registry/tool contracts rather than silently
+  changing core route semantics.
 - Machine source: [services/contracts/v1.py](../services/contracts/v1.py); Pydantic JSON Schema генерируется из моделей и не дублируется вручную.
 - Версия: `1.0`; все internal models запрещают неизвестные поля.
 - Совместимость: внешний OpenAI [ChatRequest](../services/gateway/app.py) сохраняет `extra=allow`, затем преобразуется в строгий internal contract.
@@ -120,3 +122,32 @@ Gateway required capabilities: task SQLite, fast model и strong model. Voice/Qw
 ## Contract verification
 
 Tests проверяют valid/invalid/extra fields, timezone, route-executor compatibility, override/project semantics, bounded public errors, exact Plan preservation/budget failure, state/attempt invariants, inline payload exclusion, JSON roundtrip/schema const, capability degradation, ComfyUI readiness, SQLite additive migration и сохранение `created_at`. Fixed Stage 002 corpus содержит 117 cases и проходит `117/117`; focused routing/config/eval/execution/gateway selection — `122 passed`, full suite — `189 passed`. Отдельные tests покрывают two failures → one handoff и actual fallback persistence. Raw SSE получает `complete` только при terminal `[DONE]`; pre-stream failure возвращает typed HTTP error, а mid-stream exception/clean truncated EOF/cancellation не становятся false complete. `FOUNDATION_OK`, `DOCTOR_OK`, `SMOKE_TEST_OK`, Open WebUI fast `LOCAL_UI_OK` и read-only README-heading E2E закрывают Stage 002 runtime gate.
+
+## Stage 005 coding contracts
+
+`services/coding/` owns a separate strict request/state/result family. It binds
+the exact repository, goal, constraints, acceptance, verifier argv, risk and
+data classification, rule scopes, allowed/forbidden mutation scopes, explicit
+permissions, attempts, worktree identity, artifacts, independent review, and
+optional local commit. Push and deploy are always false at this boundary.
+
+The coding state machine and append-only events do not overwrite core
+`TaskStateV1`. Gateway adapters project the final coding result back into the
+OpenAI-compatible response and core journal. A ready handoff, failed review,
+timeout, cancellation, or incomplete evidence cannot become `completed`.
+
+See [Coding Engine](CODING_ENGINE.md).
+
+## Stage 006 MCP contracts
+
+`config/mcp-registry.json` is the canonical schema/policy source for server
+identity, version, transport, consumers, minimal tool schemas, permissions,
+locality/egress, timeouts/retry, locks, lifecycle, audit, and enabled/degraded
+state. Generated consumer settings are derived views.
+
+The launcher accepts only canonical bounded JSON-RPC envelopes, filters
+discovery to the evaluated allowlist, verifies upstream schema hashes, rejects
+extra/secret-shaped input, and logs metadata rather than payloads. Optional MCP
+health is capability-specific and cannot change core readiness.
+
+See [MCP Hub](MCP_HUB.md).

@@ -21,7 +21,10 @@ Knowledge Engine индексирует явно зарегистрирован�
 
 Knowledge database пересоздаваема из разрешённых sources. Она имеет отдельный SQLite application ID `LAIK`, checksummed schema ledger, foreign keys, WAL, FTS5 и `secure_delete`. Прямой доступ других modules к её tables не является контрактом.
 
-Stage 004 не подключает Context Envelope автоматически к gateway/Qwen/Codex. CLI/API-класс готовит typed local-only context; consumer wiring и hardened coding workflow относятся к Stage 005. Fast chat не открывает KnowledgeStore и не получает repository retrieval.
+Stage 004 delivered the typed local-only CLI/class Context Envelope contract.
+Stage 005 adds its verified consumer inside the isolated local coding workflow.
+Fast/strong chat, docs, and unrelated routes still do not open KnowledgeStore or
+receive repository retrieval automatically.
 
 ## Scope и identity
 
@@ -188,7 +191,10 @@ Secret detection остаётся defense-in-depth, не абсолютной DL
 
 ## Известные ограничения
 
-1. Gateway/Entry ещё не интегрирует Context Envelope и не выводит owner из authenticated actor; текущая boundary CLI-only/single-user.
+1. Stage 005 integrates Context Envelope into the isolated local coding
+   workflow using the single-user owner boundary. General gateway routes still
+   do not derive a knowledge owner from an authenticated actor or inject
+   repository context universally.
 2. Full LSP/tree-sitter semantic index и vector reranking отсутствуют.
 3. Repository map freshness validation перечитывает approved files и может быть дороже incremental index на больших проектах.
 4. Поддерживается только стандартный локальный layout linked Git worktree; bare/custom external metadata, alternates и config includes не поддерживаются.
