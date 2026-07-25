@@ -542,7 +542,7 @@ def test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance(
     )
     verification = subprocess.run(
         [
-            "powershell.exe",
+            memory_migrations._windows_powershell_executable(),
             "-NoProfile",
             "-NonInteractive",
             "-Command",
@@ -591,7 +591,7 @@ def test_private_acl_failure_diagnostic_is_bounded_and_path_free(
 
     failed = subprocess.run(
         [
-            "powershell.exe",
+            memory_migrations._windows_powershell_executable(),
             "-NoProfile",
             "-NonInteractive",
             "-ExecutionPolicy",

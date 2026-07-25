@@ -46,11 +46,7 @@ try {
     }
 
     $stage = 'read'
-    if ($kind -eq 'directory') {
-        $acl = [IO.Directory]::GetAccessControl($target)
-    } else {
-        $acl = [IO.File]::GetAccessControl($target)
-    }
+    $acl = Get-Acl -LiteralPath $target
     $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
     if ($ownerSid.Value -ne $currentSid.Value) {
         throw 'private path is not owned by the current identity'
@@ -96,11 +92,7 @@ try {
     }
 
     $stage = 'verify'
-    if ($kind -eq 'directory') {
-        $observed = [IO.Directory]::GetAccessControl($target)
-    } else {
-        $observed = [IO.File]::GetAccessControl($target)
-    }
+    $observed = Get-Acl -LiteralPath $target
     $observedOwner = $observed.GetOwner(
         [Security.Principal.SecurityIdentifier]
     )
@@ -155,6 +147,16 @@ _WINDOWS_PRIVATE_DACL_ENCODED: Final = base64.b64encode(
 ).decode("ascii")
 
 
+def _windows_powershell_executable() -> str:
+    for name in ("pwsh.exe", "powershell.exe"):
+        candidate = shutil.which(name)
+        if candidate:
+            resolved = Path(candidate).resolve(strict=True)
+            if resolved.is_file():
+                return str(resolved)
+    raise MigrationError("Windows PowerShell executable is unavailable")
+
+
 def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
     target = Path(path).resolve()
     if directory and not target.is_dir():
@@ -171,7 +173,7 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
             )
             hardened = subprocess.run(
                 [
-                    "powershell.exe",
+                    _windows_powershell_executable(),
                     "-NoProfile",
                     "-NonInteractive",
                     "-ExecutionPolicy",
