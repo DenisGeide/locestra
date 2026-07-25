@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import os
@@ -129,9 +130,21 @@ try {
             $stage,
             $_.Exception.GetType().FullName
     )
-    exit 1
+    $exitCode = switch ($stage) {
+        'input' { 41 }
+        'identity' { 42 }
+        'read' { 43 }
+        'replace' { 44 }
+        'write' { 45 }
+        'verify' { 46 }
+        default { 49 }
+    }
+    exit $exitCode
 }
 """
+_WINDOWS_PRIVATE_DACL_ENCODED: Final = base64.b64encode(
+    _WINDOWS_PRIVATE_DACL.encode("utf-16-le")
+).decode("ascii")
 
 
 def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
@@ -155,8 +168,8 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                     "-NonInteractive",
                     "-ExecutionPolicy",
                     "Bypass",
-                    "-Command",
-                    _WINDOWS_PRIVATE_DACL,
+                    "-EncodedCommand",
+                    _WINDOWS_PRIVATE_DACL_ENCODED,
                 ],
                 check=False,
                 capture_output=True,
@@ -165,13 +178,26 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                 timeout=30,
             )
             if hardened.returncode != 0:
-                detail = next(
+                stage = {
+                    41: "input",
+                    42: "identity",
+                    43: "read",
+                    44: "replace",
+                    45: "write",
+                    46: "verify",
+                    49: "unknown",
+                }.get(hardened.returncode, "payload")
+                marker = "LOCESTRA_ACL_ERROR "
+                reported = next(
                     (
-                        line.strip()[:200]
+                        line[line.index(marker) :].strip()[:200]
                         for line in hardened.stderr.splitlines()
-                        if line.strip().startswith("LOCESTRA_ACL_ERROR ")
+                        if marker in line
                     ),
-                    "LOCESTRA_ACL_ERROR stage=unknown type=unknown",
+                    "",
+                )
+                detail = reported or (
+                    f"LOCESTRA_ACL_ERROR stage={stage} type=unreported"
                 )
                 raise OSError(f"Windows ACL update failed ({detail})")
     except Exception as exc:

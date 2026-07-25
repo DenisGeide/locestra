@@ -547,11 +547,22 @@ def test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance(
             "-NonInteractive",
             "-Command",
             r"""
-$current = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 foreach ($target in $env:LOCAL_AGENT_ACL_TARGETS.Split([IO.Path]::PathSeparator)) {
     $acl = Get-Acl -LiteralPath $target
-    $otherAllows = @($acl.Access | Where-Object {
-        $_.AccessControlType -eq 'Allow' -and $_.IdentityReference.Value -ne $current
+    $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+    if ($ownerSid.Value -ne $currentSid.Value) { exit 6 }
+    $rules = @(
+        $acl.GetAccessRules(
+            $true,
+            $true,
+            [Security.Principal.SecurityIdentifier]
+        )
+    )
+    $otherAllows = @($rules | Where-Object {
+        $_.AccessControlType -eq
+            [Security.AccessControl.AccessControlType]::Allow -and
+        $_.IdentityReference.Value -ne $currentSid.Value
     })
     if ($otherAllows.Count -ne 0) { exit 7 }
 }
