@@ -1,6 +1,8 @@
 # Target Architecture
 
-- Статус: target design, обновлённый реализациями Planner/Router Stage 002, Controlled Memory Stage 003 и scoped Knowledge/Archive boundary Stage 004. Наличие implementation не считается закрытым gate без tests и [System Manifest](../SYSTEM_MANIFEST.md).
+- Статус: target design updated through verified Stage 005 Coding Engine and
+  Stage 006 Managed MCP Hub. Stage 007 Tool/Application Registry is the next
+  planned boundary.
 - Владелец: владелец платформы.
 - Scope: стабильные module, data, failure, resource and replacement boundaries для одной local-first workstation.
 - Current implementation: [Current Architecture](ARCHITECTURE.md).
@@ -107,7 +109,11 @@ flowchart LR
   Tools --> Context7
 ~~~
 
-Пунктирные связи показывают optional consumers, а не permission grant. Scoped Memory retrieval уже подключён к допустимому local-code path. Knowledge Engine предоставляет CLI/class contracts и Context Envelope v1, но автоматический gateway/Qwen consumer ещё не подключён; до Stage 005 runtime не должен притворяться, что repository RAG уже входит в каждый coding request.
+Dashed links show optional consumers, not permission grants. Scoped Memory
+retrieval is connected to allowed local-code paths. The Stage 005 Coding Engine
+is the verified automatic consumer of Knowledge Context Envelope for isolated
+coding worktrees; this still does not imply repository retrieval in every
+chat/docs request.
 
 ## Module contracts и replacement boundaries
 
@@ -121,7 +127,7 @@ flowchart LR
 | Execution Engine | Orchestrate attempts, cancellation, timeouts, locks, tools, executors, artifacts and verification | ApprovedExecution + Plan + RouteDecision | TaskState transitions, Artifact refs, ExecutionResult | Task Store events/snapshot; Artifact Store refs | Classified Failure v1; bounded retry/fallback; process termination on cancel where supported | Qwen/Codex/chat/tool adapters реализуют отдельный interface | Boundary 001; coding 005; tools 006–007 |
 | Tool Registry | Единственный каталог реальных capabilities, schemas, permissions, health and locality | Tool lookup/call по ToolSpec v1 | Typed ToolResult или Failure v1 | Spec/version registry и bounded audit refs | unavailable/degraded изолирует capability; retry только по spec | Browser, voice, image, MCP и будущие apps заменяются по ToolSpec | Contract 001; MCP 006; unified registry 007 |
 | Memory Engine | Typed preferences/project facts/task memory с provenance, CRUD/export/delete and scope | Memory query/write command с project/user scope | Bounded MemoryRecord refs | Versioned additive schema v3 в controlled memory DB | Stale/conflict status; fail closed across project boundary | Planner/executor зависят от query API, не SQLite tables | Implemented 003; management CLI-only |
-| Knowledge Engine | Scoped import/index/retrieval/invalidation для repository/docs/archive и bounded Context Envelope | Source registration/query с exact owner/project, allowlist, budget and freshness | Ranked untrusted/local-only evidence refs, Repository Map v1, Context Envelope v1 | Separate SQLite schema v1: source versions/generations, fragments/FTS5, facts/conflicts, maps/audit | Missing/stale/privacy-invalid evidence excluded/degraded; generation publish CAS; no fabricated context | FTS/vector/reranker backend replaceable behind retrieval contract; current FTS5/rg implementation has no gateway consumer yet | Stage 004 complete; consumer wiring Stage 005 |
+| Knowledge Engine | Scoped import/index/retrieval/invalidation for repository/docs/archive and bounded Context Envelope | Source registration/query with exact owner/project, allowlist, budget and freshness | Ranked untrusted/local-only evidence refs, Repository Map v1, Context Envelope v1 | Separate SQLite schema v1: source versions/generations, fragments/FTS5, facts/conflicts, maps/audit | Missing/stale/privacy-invalid evidence excluded/degraded; generation publish CAS; no fabricated context | FTS/vector/reranker backend replaceable behind retrieval contract; Stage 005 coding consumer is verified | Stage 004 complete; coding consumer complete in Stage 005 |
 | Reviewer | Независимо сопоставить result/diff/tests с acceptance и risk | Plan, RouteDecision, TaskState, artifacts/evidence | ReviewDecision: accepted, changes_required, blocked | Review event/evidence refs | Self-claim executor не принимается; review unavailable не превращается в success | Codex review/local deterministic gates заменяемы | Boundary 001; coding enforcement 005 |
 | Artifact Store | Register bounded files/tool outputs with hash, provenance, retention and access policy | Artifact create/register/read/delete commands | ArtifactMetadata v1 and content stream/ref | outputs/inbox/temp migration targets; metadata store | Hash mismatch, missing/expired/forbidden as typed failure | Filesystem/object backend скрыт; request/task JSON хранит только refs | Contract 001; progressive implementation 003, 008–010 |
 | Task Store | Durable state snapshot; target также требует append-only transition/evidence records | Valid state update/event | TaskState v1 snapshot; target history/query | SQLite initially; versioned migrations | Stage 002 хранит structured attempts в snapshot; compare-and-set/crash recovery ещё нет | SQLite repository replaceable without changing core contracts | 001 snapshot; route/attempt fields 002; events later |
@@ -354,7 +360,13 @@ Target RouteDecision объявляет locks до execution. Stage 002 уже �
 - agent:qwen и agent:codex для executor capacity;
 - outbound:<capability-or-recipient> для controlled external actions.
 
-Target locks имеют owner request/attempt, mode, acquired_at, deadline and lease expiry и берутся в deterministic order. Текущий Stage 002 coordinator остаётся in-process без lease metadata/recovery: same canonical worktree сериализует Qwen/Codex, а разные worktrees позволяют разным executor classes войти независимо; global Qwen/GPU и Codex locks всё ещё ограничивают capacity. Multi-process deployment потребует SQLite/OS lease implementation, а не переписывания Router.
+Target locks have owner request/attempt, mode, timestamps, deadline, expiry,
+and deterministic acquisition order. Stage 005 now provides a cross-process
+file lease and durable ownership evidence for exact coding worktrees; Stage 006
+provides exact managed-process/session ownership for its MCP integrations.
+Qwen/GPU/Codex capacity locks are still gateway-local rather than a system-wide
+resource scheduler. Multi-process resource coordination remains replaceable
+behind this contract.
 
 ## Storage separation
 
@@ -401,8 +413,8 @@ SQLite можно сохранить как первый backend, но schemas/m
 | 002 | Complete: deterministic Planner/Router, explicit overrides, reason codes, bounded fallback, 117/117 routing evaluation and live runtime gates |
 | 003 | Complete: Memory Engine schema, migrations, CRUD/export/delete, provenance/privacy |
 | 004 | Complete: scoped source generations, archive adapters, Repository Map v1, FTS5/rg retrieval, Context Envelope, invalidation/purge and green regression/doctor/smoke/live-index gates |
-| 005 | Hardened Qwen/Codex Execution Engine, worktree safety, retries and independent Reviewer |
-| 006 | Managed MCP Hub with Context7/Playwright failure isolation |
+| 005 | Complete: hardened Qwen/Codex Coding Engine, owned worktree safety, bounded retries, verification, independent review and resumable handoff |
+| 006 | Complete: managed MCP Hub with Context7, loopback Playwright fixture, local diagnostics, generated consumer views and failure isolation |
 | 007 | Unified Tool/Application Registry and permission-gated real adapters |
 | 008 | Durable voice jobs, long transcription, Artifact Store integration |
 | 009 | Verified vision/image workflows and cross-process GPU coordination |
@@ -410,7 +422,12 @@ SQLite можно сохранить как первый backend, но schemas/m
 | 011 | Controlled evidence → experiment → approval → apply/rollback consumer of these contracts |
 | 012 | Versioned evaluation suites, baseline/resource metrics and regression gates |
 
-Stages 001–004 закрыли core routing, Controlled Memory и отдельный scoped Knowledge contract. Runtime coding integration Context Envelope остаётся Stage 005 consumer wiring. Unified registry/reviewer из 005–007 и durable interfaces из 010 остаются planned и не должны имитироваться Planner/Router.
+Stages 001–006 closed core routing, Controlled Memory, scoped Knowledge,
+repository-aware coding, and a deliberately small managed MCP layer. Stage 007
+must unify native tools, MCP capabilities, applications, policy, health, and
+resource metadata without duplicating the Coding Engine's filesystem/shell/Git
+authority. Durable interfaces remain Stage 010. The initial routing EvalKit is
+published, but broader Stage 012 evaluation remains planned.
 
 ## Acceptance for architectural replacement
 

@@ -10,21 +10,30 @@ Locestra is a local-first AI orchestration platform for software development. It
 
 Locestra is not another model or just another chat UI. It is the control plane that routes each task to the right model, agent, and tool while keeping ordinary work local and making cloud use explicit.
 
-Locestra is an independent open-source project created and maintained by [DenisGeide](https://github.com/DenisGeide).
+Locestra is an independent open-source project created and maintained by
+[DenisGeide](https://github.com/DenisGeide).
 
 > [!WARNING]
 > Locestra is an early development preview for a single trusted user on a Windows workstation. It is not production-ready or multi-user software. Do not expose its services to a LAN or the public Internet. Installation, configuration, APIs, and internal contracts may change.
 
 ## Current status
 
-This first public snapshot contains the verified work from Stages 000–004:
+The public tree now contains the verified work from Stages 000–006:
 
 - platform governance, permissions, lifecycle, and health contracts;
 - deterministic task planning and automatic routing;
 - scoped, inspectable long-term memory;
-- repository knowledge, indexing, retrieval, and context envelopes.
+- repository knowledge, indexing, retrieval, and context envelopes;
+- a hardened local Qwen/Codex Coding Engine with isolated Git worktrees,
+  verification, review, and resumable handoff;
+- a small managed MCP Hub for Context7, bounded Playwright UI fixtures, and
+  local registry diagnostics.
 
-The initial public [Locestra EvalKit](docs/EVALUATION.md) adds a versioned 117-case English/Russian regression benchmark for the deterministic routing path. Stage 005, the hardened local Qwen/Codex Coding Engine, is under final acceptance and will be published after its live, regression, lifecycle, and UI gates are complete. Stages 006–012 will add managed MCP integrations, a unified tool registry, durable voice and image jobs, interfaces, controlled self-improvement, and evaluation suites for those capabilities as they become measurable.
+The initial public [Locestra EvalKit](docs/EVALUATION.md) adds a versioned
+117-case English/Russian regression benchmark for the deterministic routing
+path. That Stage 012 groundwork is useful today, but it does **not** mean that
+the broader Stage 012 evaluation program—or Stages 007–011—is complete.
+The next planned milestone is Stage 007, a unified Tool/Application Registry.
 
 See the [Roadmap](docs/ROADMAP.md) and [Current State](docs/CURRENT_STATE.md) for evidence, limitations, and the difference between implemented, verified, and planned capabilities.
 
@@ -103,9 +112,13 @@ It reports route accuracy, macro-F1, exact policy-outcome matching, a confusion 
 - [Operations](docs/OPERATIONS.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Evaluation](docs/EVALUATION.md)
+- [Coding Engine](docs/CODING_ENGINE.md)
+- [MCP Hub](docs/MCP_HUB.md)
 - [Permissions](docs/PERMISSIONS.md)
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Project Charter](docs/PROJECT_CHARTER.md)
+- [Changelog](CHANGELOG.md)
+- [Stage 021 implementation prompts](prompts/stage-021/ALL-PROMPTS-021-FRONTIER-AGENT-RUNTIME.md) — future-work operator instructions, not completed capabilities
 
 ## Security
 

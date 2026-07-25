@@ -1,6 +1,8 @@
 # Deterministic Planner and Router
 
-- Статус: Stage 002 complete; unit/contract/evaluation, doctor/smoke, Open WebUI, live Context7 и external browser gates green.
+- Статус: Stage 002 routing policy remains complete; Stage 005 production
+  `local_code` and Stage 006 managed documentation integration are verified
+  downstream consumers of the unchanged deterministic decision boundary.
 - Policy schema: `1.0`.
 - Policy version: `2026-07-14.1`.
 - Machine sources: [normalizer](../services/orchestration/normalizer.py), [planner](../services/orchestration/planner.py), [router](../services/orchestration/router.py), [routing policy](../config/routing.json) и [v1 contracts](../services/contracts/v1.py).
@@ -185,5 +187,12 @@ Fixed corpus в [test_routing_eval.py](../tests/test_routing_eval.py) содер
 4. Chat voice bridge поддерживает bounded inline base64 `input_audio`, но не произвольные remote audio URLs; vision executor отсутствует.
 5. Codex scoped approval ledger отсутствует, поэтому автоматический cloud execution закрыт fail-safe bundle behavior.
 6. Browser adapter проверяет initial/redirect/HTTP(S)-subresource targets, но WebSocket/service-worker paths, общий outbound proxy/audit и полное DNS pinning/rebinding hardening не реализованы.
-7. Worktree allowlist, symlink/junction containment и OS sandbox остаются этапом 005/010.
-8. Route decision и attempt history сохраняются snapshot-ом, но не append-only event log.
+7. Stage 005 adds strict Coding Engine repository/worktree containment and a
+   separate append-only coding event store. A general platform-wide
+   actor/workspace allowlist remains future work.
+8. Core route decision and attempt history remain snapshot-based; the richer
+   append-only journal is coding-specific rather than a replacement for every
+   route.
+9. Stage 006 MCP degraded/circuit state can disable only its dependent
+   capability. It does not grant permission or make core chat/coding readiness
+   depend on an optional server.

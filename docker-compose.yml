@@ -15,7 +15,7 @@ services:
       DEFAULT_MODELS: "local-agent-auto"
       AUDIO_STT_ENGINE: "openai"
       AUDIO_STT_OPENAI_API_BASE_URL: "http://host.docker.internal:${VOICE_PORT:-8788}/v1"
-      AUDIO_STT_OPENAI_API_KEY: "local-voice"
+      AUDIO_STT_OPENAI_API_KEY: "${GATEWAY_API_KEY}"
       ENABLE_PERSISTENT_CONFIG: "false"
       ENABLE_AUTOCOMPLETE_GENERATION: "false"
       ENABLE_FOLLOW_UP_GENERATION: "false"

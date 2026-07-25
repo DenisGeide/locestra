@@ -1,6 +1,8 @@
 # Стратегия контекста
 
-- Статус: bounded chat/Plan/handoff Stage 002 и scoped Knowledge Context Envelope v1 Stage 004 реализованы; автоматическое подключение Knowledge envelope к gateway/Qwen/Codex ещё не выполнено.
+- Статус: bounded chat/Plan/handoff Stage 002 and scoped Knowledge Context
+  Envelope v1 Stage 004 are implemented; Stage 005 adds the verified Coding
+  Engine consumer. Context injection is still not universal across every route.
 - Владелец: Execution Engine совместно с Planner, Controlled Memory Engine и Knowledge Engine.
 - Источник правил: [REASONING](../constitution/REASONING.md), [PRIVACY](../constitution/PRIVACY.md) и [Permissions](PERMISSIONS.md).
 - Изменение: только вместе с измеримым quality/latency/privacy case и regression evidence.
@@ -9,13 +11,21 @@
 
 Normalizer/Planner маршрутизируют по последнему пользовательскому сообщению и bounded attachment metadata. Для локального chat gateway собирает bounded recent history: text обрезается head/tail с provenance marker, assistant tool call и все его tool results сохраняются атомарно, orphan/oversized structured groups отбрасываются с явной отметкой. Для non-fast задач Planner создаёт `PlanV1.context_budget`, а TaskState сохраняет plan/decision. Qwen Code получает exact rendered Plan; Context7, browser, voice и image workers всё ещё получают adapter-specific input. Вывод subprocess bounded до 20 000 символов.
 
-Stage 004 добавляет отдельный `ContextEnvelopeV1` в `services/knowledge/`: exact owner/project, goal, constraints, modified files, unresolved errors, verification plan, bounded fresh tool results, compact fresh Repository Map summary и FTS5-retrieved fragments с provenance. Fixed sections проходят secret scan; conservative budget считается по полному serialized envelope, repository summary compacted ступенчато, затем evidence удаляется целыми fragments. Freshness повторно проверяет source policy/parser/hash/size/mtime, Git membership и commit. Этот builder доступен через Python/CLI, но gateway пока его не вызывает, поэтому обычный Open WebUI/Qwen request ещё не получает Stage 004 repository context автоматически.
+Stage 004 adds `ContextEnvelopeV1`: exact owner/project, goal, constraints,
+modified files, unresolved errors, verification plan, bounded fresh tool
+results, compact Repository Map summary, and FTS5-retrieved fragments with
+provenance. Stage 005 `CodingContextBuilder` consumes that envelope for the
+isolated coding worktree. Ordinary fast/strong chat and documentation routes do
+not automatically receive repository retrieval.
 
 Для executable repository/docs plan renderer без сжатия и перефразирования передаёт multiline `goal`, все `constraints`, `acceptance_criteria` и `verification_plan`. Conservative UTF-8 byte upper bound вместе с execution wrapper проверяется до запуска Qwen; oversized plan получает typed `context.agent_input_exceeds_budget` и fail-closed, а не молчаливую потерю условий.
 
 После двух local-code failures Stage 002 handoff сохраняет bounded original goal, project/worktree, constraints, acceptance, verification, error/command summaries, modified files и artifact refs. Это provenance-preserving fallback envelope, но не repository retrieval или долговременная память.
 
-Это означает, что заявлять 128K/256K эффективного контекста сейчас нельзя. Проверенные лимиты профилей: 8K для `local-fast` и 32K для `local-strong`/Qwen Code. Stage 004 умеет выбирать bounded evidence вместо repository dump, но максимальный machine contract budget также 32 768 и ещё не является automatic runtime injection. Tokenizer-specific accounting и долговременная active-task compaction остаются execution hardening.
+This means the project does not claim universal 128K/256K effective context.
+Bounded retrieval and task artifacts replace repository dumps. Exact model
+limits are profile configuration, while tokenizer-specific accounting and
+long-task active compaction remain future work.
 
 ## Context envelope и дальнейшая цель
 
@@ -43,7 +53,11 @@ Stage 004 добавляет отдельный `ContextEnvelopeV1` в `services
 | Knowledge Context Envelope v1 | contract max 32 768 | explicit caller budget 128–32 768 | caller/model reserve задаётся отдельно | fixed sections fail-closed; map compacted; evidence trims целыми fragments; stale/privacy-invalid evidence excluded |
 | Codex | provider-dependent | задаётся handoff policy | provider-dependent | минимизированный scoped handoff; не использовать окно как разрешение на cloud export |
 
-Plan-числа versioned в routing policy `2026-07-14.1`. Knowledge limits versioned отдельно в policy `2026-07-15.2`; fragment ceiling 1 200 chars, retrieval максимум 32 fragments, Context Envelope budget максимум 32 768. Conservative UTF-8 estimate остаётся верхней оценкой serialized payload, а не runtime tokenizer enforcement. Stage 005 consumer должен фиксировать model profile, фактический input/output и reserve до execution.
+Plan limits are versioned in routing policy `2026-07-14.1`; Knowledge limits
+are versioned separately in policy `2026-07-15.2`. Conservative UTF-8 estimates
+remain serialized-payload bounds rather than tokenizer enforcement. The Stage
+005 coding consumer records its profile, bounded context artifact, attempts,
+and output evidence.
 
 ## Сжатие
 
@@ -70,7 +84,11 @@ Summary не становится фактом. Оно содержит producer
 - выходе source из Git tracked inventory или allowlist;
 - конфликте со свежим tool result.
 
-Свежий файл/tool result имеет приоритет. Stage 004 Context Envelope включает fresh tool results отдельной секцией и использует modified files/errors в retrieval query. Невалидный chunk не переиспользуется только потому, что он уже присутствовал в предыдущей generation/history. Network documentation TTL остаётся отдельной будущей MCP boundary.
+Fresh files/tool results take priority. Stage 004 Context Envelope keeps fresh
+tool results separate and uses modified files/errors in retrieval. Invalid
+chunks are not reused from history. Stage 006 establishes the external
+Context7 boundary for current documentation, but does not merge network docs
+into repository Knowledge automatically.
 
 ## Безопасность
 
@@ -82,4 +100,10 @@ Summary не становится фактом. Оно содержит producer
 
 ## Проверка реализации и дальнейшего Context Engine
 
-Stage 002 tests покрывают exact multiline goal/constraints/acceptance/verification preservation, 6000/4000 budget, 4096 model output config, oversized fail-closed before executor, bounded chat history без orphan tool results, attachment payload exclusion, attempt/handoff provenance и redaction credential patterns. Stage 004 implementation добавляет contract/budget validation, deterministic retrieval fixtures, source-hash/tracked/policy invalidation, provenance, secret exclusion и cross-project isolation; фактические финальные counts фиксируются в [Current State](CURRENT_STATE.md) только после полного gate. Всё ещё нужны gateway/Qwen integration, tokenizer accounting, artifact-backed old tool results, long-task compaction и measured quality/latency comparison. До consumer E2E документ не заявляет, что Context Envelope работает в каждом пользовательском запросе.
+Stage 002 tests cover exact multiline goal/constraints/acceptance/verification,
+budgets, bounded history, handoff provenance, and redaction. Stage 004 adds
+contract/budget validation, deterministic retrieval, invalidation, provenance,
+secret exclusion, and cross-project isolation. Stage 005 verifies the coding
+consumer end-to-end. Tokenizer accounting, artifact-backed old tool results,
+long-task compaction, and measured quality/latency comparison remain open; the
+document does not claim Context Envelope use for every request.

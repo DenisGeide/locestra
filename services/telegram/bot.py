@@ -17,11 +17,16 @@ VOICE = SETTINGS.telegram_voice_url
 GATEWAY_AUTH = SETTINGS.gateway_credential.get_secret_value()
 
 
+def gateway_headers() -> dict[str, str]:
+    if not GATEWAY_AUTH:
+        raise RuntimeError("The local gateway credential is unavailable")
+    return {"Authorization": f"Bearer {GATEWAY_AUTH}"}
+
+
 async def ask_agent(content: str | list[dict]) -> str:
     payload = {"model": "local-agent-auto", "messages": [{"role": "user", "content": content}]}
     async with httpx.AsyncClient(timeout=1800) as client:
-        headers = {"Authorization": f"Bearer {GATEWAY_AUTH}"} if GATEWAY_AUTH else {}
-        response = await client.post(GATEWAY, json=payload, headers=headers)
+        response = await client.post(GATEWAY, json=payload, headers=gateway_headers())
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
 
@@ -62,7 +67,11 @@ async def on_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await telegram_file.download_to_drive(temp_path)
         async with httpx.AsyncClient(timeout=1800) as client:
             with temp_path.open("rb") as source:
-                response = await client.post(VOICE, files={"file": (temp_path.name, source)})
+                response = await client.post(
+                    VOICE,
+                    files={"file": (temp_path.name, source)},
+                    headers=gateway_headers(),
+                )
             response.raise_for_status()
             transcript = response.json()["text"]
         answer = await ask_agent(transcript)

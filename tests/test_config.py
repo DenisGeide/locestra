@@ -127,4 +127,6 @@ def test_committed_baseline_matches_public_environment_template():
     assert settings.n8n_port == int(public["N8N_PORT"])
     assert settings.comfyui_url == public["COMFYUI_URL"]
     assert settings.whisper_model == public["WHISPER_MODEL"]
+    assert settings.enable_codex_exec is False
+    assert public["ENABLE_CODEX_EXEC"] == "false"
     assert public["GATEWAY_API_KEY"] == ""

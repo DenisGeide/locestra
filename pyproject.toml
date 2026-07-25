@@ -15,6 +15,7 @@ dependencies = [
   "python-multipart>=0.0.20",
   "python-telegram-bot>=22.0",
   "uvicorn[standard]>=0.34",
+  "mcp==1.28.1",
 ]
 
 [dependency-groups]
@@ -23,3 +24,9 @@ dev = ["pytest>=8.3"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "required_e2e: mandatory Stage 005 coding-engine acceptance coverage",
+  "live_qwen: opt-in live Qwen Code execution against an external synthetic fixture",
+  "live_playwright: opt-in live Playwright execution against a loopback synthetic fixture",
+  "live_codex_public: separately approved live Codex execution using PUBLIC synthetic fixture data only",
+]

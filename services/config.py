@@ -51,7 +51,7 @@ class PlatformSettings(BaseModel):
     n8n_port: int = Field(default=5678, ge=1, le=65535)
     default_project: str = str(ROOT)
     enable_local_code_exec: bool = True
-    enable_codex_exec: bool = True
+    enable_codex_exec: bool = False
     codex_sandbox: str = "workspace-write"
     whisper_model: str = "large-v3-turbo"
     whisper_device: str = "cpu"

@@ -43,7 +43,9 @@ function Test-GatewayAuthBoundary {
         # OpenAI request.  A legacy process returning 200 is restarted below.
         Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/v1/models' -TimeoutSec 5 | Out-Null
         return $false
-    } catch {}
+    } catch {
+        if ((Get-HttpErrorStatusCode $_) -ne 401) { return $false }
+    }
     try {
         $headers = @{ Authorization = 'Bearer ' + $env:GATEWAY_API_KEY }
         $response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/v1/models' -Headers $headers -TimeoutSec 5
@@ -60,6 +62,42 @@ function Wait-GatewayAuthBoundary([int]$Seconds = 30) {
         Start-Sleep -Seconds 1
     } while ((Get-Date) -lt $deadline)
     throw 'Gateway OpenAI authentication boundary is not ready'
+}
+
+function Get-HttpErrorStatusCode($ErrorRecord) {
+    try {
+        return [int]$ErrorRecord.Exception.Response.StatusCode
+    } catch {
+        return 0
+    }
+}
+
+function Test-VoiceAuthBoundary {
+    $url = 'http://127.0.0.1:8788/v1/audio/transcriptions'
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 5 | Out-Null
+        return $false
+    } catch {
+        if ((Get-HttpErrorStatusCode $_) -ne 401) { return $false }
+    }
+    try {
+        $headers = @{ Authorization = 'Bearer ' + $env:GATEWAY_API_KEY }
+        # GET is intentionally unsupported.  Reaching the router as an
+        # authenticated request therefore returns 405 without loading Whisper.
+        Invoke-WebRequest -UseBasicParsing -Uri $url -Headers $headers -TimeoutSec 5 | Out-Null
+        return $false
+    } catch {
+        return ((Get-HttpErrorStatusCode $_) -eq 405)
+    }
+}
+
+function Wait-VoiceAuthBoundary([int]$Seconds = 30) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    do {
+        if (Test-VoiceAuthBoundary) { return }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+    throw 'Voice OpenAI authentication boundary is not ready'
 }
 
 function Protect-CurrentUserFile([string]$Path) {
@@ -125,6 +163,10 @@ $Python = Join-Path $Root '.venv\Scripts\python.exe'
 & $Python -c 'from services.config import get_settings; get_settings()'
 if ($LASTEXITCODE -ne 0) {
     throw 'Effective configuration is invalid or requires a coordinated lifecycle migration'
+}
+& $Python -m services.mcp_hub.cli generate | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Managed MCP registry or generated Qwen views are invalid'
 }
 
 $dockerReady = $false
@@ -230,6 +272,13 @@ Wait-GatewayAuthBoundary 30
 $voiceOwnership = Resolve-ProcessOwnership `
     -Root $Root -Name 'voice' -Port 8788 -Fragments $VoiceFragments `
     -RequireRootIdentity $true -AllowLegacy -AllowMatchingAdoption
+if ($voiceOwnership -and -not (Test-VoiceAuthBoundary)) {
+    $stopped = Stop-OwnedProcess `
+        -Root $Root -Name 'voice' -Port 8788 -Fragments $VoiceFragments `
+        -RequireRootIdentity $true -Seconds 20 -AllowLegacy
+    if (-not $stopped) { throw 'Legacy voice service could not be safely restarted for authentication' }
+    $voiceOwnership = $null
+}
 if (-not $voiceOwnership) {
     if (@(Get-ListenerProcessIds 8788).Count -gt 0) {
         throw 'Port 8788 is occupied but safe voice ownership could not be established'
@@ -256,6 +305,7 @@ if (-not $voiceOwnership) {
     }
 }
 
+Wait-VoiceAuthBoundary 30
 Wait-GatewayReady 120
 Wait-Url 'http://127.0.0.1:8788/health' 120
 
@@ -302,4 +352,5 @@ Write-Host 'n8n:        http://127.0.0.1:5678'
 Write-Host 'Gateway:    http://127.0.0.1:8787/health'
 Write-Host 'Voice:      http://127.0.0.1:8788/health'
 Write-Host 'Fast model: http://127.0.0.1:11435 (CPU)'
+Write-Warning 'Gateway and voice bind host IPv4 interfaces for Docker Desktop. Bearer auth is mandatory; keep inbound firewall rules and port forwarding closed for ports 8787/8788.'
 if ($telegramToken) { Write-Host 'Telegram:   enabled' } else { Write-Host 'Telegram:   waiting for TELEGRAM_BOT_TOKEN' }

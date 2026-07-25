@@ -11,6 +11,14 @@ $env:GATEWAY_API_KEY = if (Test-Path -LiteralPath $gatewayKeyPath) {
 }
 
 $failures = 0
+$mcpPython = Join-Path $Root '.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $mcpPython) {
+    & $mcpPython -m services.mcp_hub.cli stop | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'Managed MCP Hub refused to stop an unverified owner record'
+        $failures++
+    }
+}
 $ownedWorkers = @(
     @{ Name='gateway'; Port=8787; Fragments=@('uvicorn','services.gateway.app:app','--port','8787'); RequireRoot=$true },
     @{ Name='voice'; Port=8788; Fragments=@('uvicorn','services.voice.app:app','--port','8788'); RequireRoot=$true },

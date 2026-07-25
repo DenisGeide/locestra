@@ -39,7 +39,15 @@ Approval должен задавать действие, workspace/данные,
 
 ## Текущий enforcement
 
-Фактически работают некоторые sandbox/locks и task-level prompts, но отсутствуют общий workspace allowlist, network policy, data classification и централизованный approval ledger. Qwen Code запускается в auto/yolo режиме, Codex capability включена по умолчанию, а Telegram отвечает без actor allowlist. Эти runtime paths пока нарушают целевое enforcement и не должны использоваться с недоверенным ingress/private cloud data до этапов 001–007 и 010–011.
+Stage 005 technically enforces task-scoped coding permissions, owned worktrees,
+container boundaries, mutation scopes, verification/review, optional local
+commit, and public-data-only Codex execution. Stage 006 enforces minimal MCP
+tool schemas, locality/egress, timeouts, exact ownership, and payload-free
+audit. Remaining platform gaps include a general actor/workspace allowlist,
+central approval ledger, complete outbound policy, and Telegram actor
+authorization. Gateway and voice share a generated bearer for `/v1/*`, but
+their Docker-reachable host listeners remain single-user boundaries and must
+not accept untrusted network ingress or private cloud transfer.
 
 ## Нарушение или неопределённость
 

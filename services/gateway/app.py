@@ -11,23 +11,45 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-import psutil
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from services.coding import CodingEngine, CodingEngineError
+from services.coding.contracts import (
+    CodingMode,
+    CodingPermissionsV1,
+    CodingRisk,
+    CodingTaskRequestV1,
+    CodingTaskResultV1,
+    CodingTaskStatus,
+    DataClassification,
+    ExecutorKind,
+    ReviewVerdict,
+)
+from services.coding.discovery import discover_verification_commands
+from services.coding.git import CodingRepositoryError, resolve_repository
+from services.coding.executors import (
+    CodexExecutor,
+    QwenExecutor,
+    resolve_codex_executable,
+)
+from services.coding.process import ProcessTreeGuard, safe_child_environment
+from services.coding.scope import CodingScopeError, resolve_declared_coding_scope
 from services.common import INBOX_DIR, OUTPUT_DIR, ROOT, RUN_DIR, save_task, task_store_ready
 from services.config import get_settings
 from services.contracts import (
@@ -42,7 +64,10 @@ from services.contracts import (
     RouteDecisionV1,
 )
 from services.health import CapabilityHealthV1, CapabilityStatus, aggregate_health
+from services.knowledge.privacy import detect_secret
 from services.memory.integration import attach_memory_to_planning
+from services.mcp_hub.config import generate_qwen_views, load_registry, validate_installed_source
+from services.mcp_hub.runtime import peek_status
 from services.orchestration.handoff import (
     collect_modified_files,
     ensure_codex_handoff,
@@ -94,6 +119,20 @@ TRUSTED_GATEWAY_REQUEST: contextvars.ContextVar[bool] = contextvars.ContextVar(
 app = FastAPI(title="Local Agent Gateway", version="0.2.0")
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 logger = logging.getLogger("uvicorn.error")
+_MCP_CORRELATION_ENV = "LOCESTRA_MCP_CORRELATION_ID"
+_SAFE_MCP_CORRELATION_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+def _validated_mcp_correlation_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        secret_like = detect_secret(value.encode("utf-8", errors="strict")) is not None
+    except (UnicodeError, ValueError, RecursionError):
+        secret_like = True
+    if not _SAFE_MCP_CORRELATION_ID.fullmatch(value) or secret_like:
+        raise RuntimeError("MCP correlation metadata is invalid")
+    return value
 
 
 @app.middleware("http")
@@ -130,8 +169,67 @@ CODEX_LOCK = asyncio.Lock()
 IMAGE_LOCK = asyncio.Lock()
 GPU_LOCK = asyncio.Lock()
 FAST_MODEL_LOCK = asyncio.Lock()
+DOCS_EXECUTION_LOCK = asyncio.Lock()
 WORKTREE_LOCKS: dict[str, asyncio.Lock] = {}
 ROUTING_CAPABILITY_CACHE: tuple[float, tuple[bool, bool], CapabilitySnapshot] | None = None
+CODING_ENGINE_INSTANCE: CodingEngine | None = None
+CODING_ENGINE_FACTORY_LOCK = threading.Lock()
+
+_PUBLIC_DOCS_QUERY_MAX_CHARS = 4_096
+_PUBLIC_DOCS_PROJECT_DECLARATION = re.compile(
+    r"\b(?:project|repo|repository|\u043f\u0440\u043e\u0435\u043a\u0442|\u0440\u0435\u043f\u043e\u0437\u0438\u0442\u043e\u0440\u0438\u0439)\s*[:=]\s*"
+    r"(?:\"(?:[A-Za-z]:[\\/]|\\\\|/)[^\"\r\n]+\"|'(?:[A-Za-z]:[\\/]|\\\\|/)[^'\r\n]+'|"
+    r"(?:[A-Za-z]:[\\/]|\\\\|/)[^\r\n;]+)\s*;?",
+    re.IGNORECASE,
+)
+_PUBLIC_DOCS_ABSOLUTE_PATH = re.compile(
+    r"(?:\"(?:[A-Za-z]:[\\/]|\\\\|/)[^\"\r\n]+\"|'(?:[A-Za-z]:[\\/]|\\\\|/)[^'\r\n]+'|"
+    r"[A-Za-z]:[\\/][^\r\n;,<>|]+|\\\\[^\r\n;,<>|]+|"
+    r"(?<![:/\w])/(?!/)[^\r\n;,<>|]+)",
+    re.IGNORECASE,
+)
+_PUBLIC_DOCS_CODE_MARKUP = re.compile(
+    r"```|~~~|<\s*/?\s*(?:code|pre|script|style)\b", re.IGNORECASE
+)
+_PUBLIC_DOCS_CODE_LINE = re.compile(
+    r"(?im)^\s*(?:#!|>>>|PS>|"
+    r"(?:async\s+)?def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(|"
+    r"class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s*\([^\r\n]*\))?\s*:|"
+    r"(?:from\s+[A-Za-z0-9_.]+\s+import|import\s+[A-Za-z0-9_.]+)|"
+    r"(?:function|const|let|var)\s+[A-Za-z_$][A-Za-z0-9_$]*|"
+    r"#\s*include\s*[<\"]|using\s+namespace\s+|"
+    r"(?:public|private|protected)\s+(?:static\s+)?(?:class|void|int|string)\b|"
+    r"(?:select\b[^\r\n]+\bfrom|create\s+table|insert\s+into|update\b[^\r\n]+\bset)\b)"
+)
+_PUBLIC_DOCS_ASSIGNMENT_LINE = re.compile(
+    r"(?m)^\s*[A-Za-z_$][A-Za-z0-9_.$\[\]'\"]*\s*(?::=|=(?!=))\s*\S+"
+)
+_DOCS_EPHEMERAL_ROOT = RUN_DIR / "ephemeral-docs"
+_DOCS_CORE_TOOL_SENTINEL = "todo_write"
+_DOCS_EXCLUDED_TOOLS = (
+    "todo_write",
+    "agent",
+    "skill",
+    "exit_plan_mode",
+    "enter_plan_mode",
+    "ask_user_question",
+    "create_sub_session",
+    "task_stop",
+    "task_create",
+    "task_update",
+    "task_list",
+    "team_create",
+    "team_delete",
+    "team_plan_approval",
+    "send_message",
+    "structured_output",
+    "tool_search",
+    "enter_worktree",
+    "exit_worktree",
+    "workflow",
+    "artifact",
+    "record_artifact",
+)
 
 
 class AgentContextBudgetExceeded(RuntimeError):
@@ -211,6 +309,7 @@ async def transcribe_chat_audio(messages: list[dict[str, Any]]) -> str:
             f"http://127.0.0.1:{SETTINGS.voice_port}/v1/audio/transcriptions",
             files={"file": (f"attachment.{audio_format}", payload, media_type)},
             data={"model": "whisper-1"},
+            headers={"Authorization": f"Bearer {GATEWAY_BEARER_CREDENTIAL}"},
         )
         response.raise_for_status()
         body = response.json()
@@ -252,6 +351,218 @@ def normalize_entry_request(
                 "message": "The normalized request exceeds an internal contract limit or is invalid.",
             },
         ) from None
+
+
+def _docs_payload_contains_code(value: str) -> bool:
+    """Reject source/command payloads while allowing ordinary API terminology."""
+
+    if _PUBLIC_DOCS_CODE_MARKUP.search(value) or _PUBLIC_DOCS_CODE_LINE.search(value):
+        return True
+    if len(_PUBLIC_DOCS_ASSIGNMENT_LINE.findall(value)) >= 2:
+        return True
+    stripped = value.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(stripped)
+        except (json.JSONDecodeError, RecursionError):
+            pass
+        else:
+            return True
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(value):
+        if character not in "{[":
+            continue
+        try:
+            decoded, _ = decoder.raw_decode(value[index:])
+        except (json.JSONDecodeError, RecursionError):
+            continue
+        if isinstance(decoded, (dict, list)):
+            return True
+    return False
+
+
+def _docs_payload_contains_secret(value: str) -> bool:
+    try:
+        return detect_secret(value.encode("utf-8", errors="strict")) is not None
+    except (UnicodeError, ValueError, RecursionError):
+        return True
+
+
+def prepare_public_docs_execution(
+    request: NormalizedRequestV1,
+) -> tuple[NormalizedRequestV1, PlanV1]:
+    """Build the only prompt/plan allowed to cross the Context7 boundary.
+
+    Context7 is an external documentation service.  Repository identity,
+    attachments, credentials, and pasted code are intentionally excluded
+    instead of relying on an executor prompt to keep them private.
+    """
+
+    value = request.user_message
+    rejected = (
+        bool(request.attachments)
+        or not value
+        or len(value) > _PUBLIC_DOCS_QUERY_MAX_CHARS
+        or "\x00" in value
+        or _docs_payload_contains_secret(value)
+        or _docs_payload_contains_code(value)
+    )
+    if rejected:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "docs.external_payload_rejected",
+                "message": (
+                    "Documentation lookup accepts only a bounded public natural-language query "
+                    "without attachments, credentials, or code payloads."
+                ),
+            },
+        )
+
+    sanitized = _PUBLIC_DOCS_PROJECT_DECLARATION.sub(" ", value)
+    sanitized = _PUBLIC_DOCS_ABSOLUTE_PATH.sub(" [local path omitted] ", sanitized)
+    sanitized = re.sub(r"[ \t]+", " ", sanitized)
+    sanitized = re.sub(r"\s*\r?\n\s*", " ", sanitized).strip(" ;,\t\r\n")
+    if (
+        not sanitized
+        or len(sanitized) > _PUBLIC_DOCS_QUERY_MAX_CHARS
+        or _PUBLIC_DOCS_ABSOLUTE_PATH.search(sanitized)
+        or _docs_payload_contains_secret(sanitized)
+        or _docs_payload_contains_code(sanitized)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "docs.external_payload_rejected",
+                "message": "Documentation lookup could not produce a safe public query.",
+            },
+        )
+
+    external_request = normalize_messages(
+        [{"role": "user", "content": sanitized}],
+        default_project=None,
+        request_id=request.request_id,
+        source=request.source,
+    )
+    external_planning = plan_request(external_request)
+    external_plan = external_planning.plan
+    if (
+        external_request.project_hint is not None
+        or external_plan is None
+        or not external_planning.signals.docs
+        or external_plan.tools != ["context7"]
+        or external_plan.memory_context
+        or external_plan.memory_record_refs
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "docs.external_payload_rejected",
+                "message": "Documentation lookup could not produce a documentation-only plan.",
+            },
+        )
+    return external_request, external_plan
+
+
+def _path_is_reparse(path: Path, metadata: os.stat_result | None = None) -> bool:
+    metadata = metadata or path.lstat()
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return path.is_symlink() or bool(getattr(metadata, "st_file_attributes", 0) & reparse_flag)
+
+
+def _guarded_docs_temp_root() -> Path:
+    _DOCS_EPHEMERAL_ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
+    metadata = _DOCS_EPHEMERAL_ROOT.lstat()
+    absolute = os.path.normcase(os.path.abspath(_DOCS_EPHEMERAL_ROOT))
+    canonical = os.path.normcase(os.path.realpath(_DOCS_EPHEMERAL_ROOT))
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or _path_is_reparse(_DOCS_EPHEMERAL_ROOT, metadata)
+        or absolute != canonical
+    ):
+        raise RuntimeError("The documentation temp root is not a canonical local directory")
+    return _DOCS_EPHEMERAL_ROOT
+
+
+def _new_guarded_docs_directory(prefix: str) -> tuple[Path, tuple[int, int]]:
+    root = _guarded_docs_temp_root()
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        metadata = path.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or _path_is_reparse(path, metadata)
+            or os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path))
+            or any(path.iterdir())
+        ):
+            raise RuntimeError("The documentation workspace is not fresh and canonical")
+        identity = (metadata.st_dev, metadata.st_ino)
+        return path, identity
+    except Exception:
+        if path.exists() and not _path_is_reparse(path):
+            shutil.rmtree(path)
+        raise
+
+
+def _remove_guarded_docs_directory(
+    path: Path,
+    identity: tuple[int, int],
+) -> None:
+    metadata = path.lstat()
+    if (
+        (metadata.st_dev, metadata.st_ino) != identity
+        or not stat.S_ISDIR(metadata.st_mode)
+        or _path_is_reparse(path, metadata)
+        or os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path))
+    ):
+        raise RuntimeError("Refusing to clean a replaced documentation workspace")
+    for current_root, directories, files in os.walk(path, topdown=True, followlinks=False):
+        current = Path(current_root)
+        for name in [*directories, *files]:
+            candidate = current / name
+            candidate_metadata = candidate.lstat()
+            if _path_is_reparse(candidate, candidate_metadata):
+                raise RuntimeError("Refusing to traverse a reparse point in documentation workspace")
+            try:
+                os.chmod(
+                    candidate,
+                    (
+                        stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+                        if stat.S_ISDIR(candidate_metadata.st_mode)
+                        else stat.S_IRUSR | stat.S_IWUSR
+                    ),
+                )
+            except OSError:
+                pass
+    shutil.rmtree(path)
+    if path.exists():
+        raise RuntimeError("Documentation workspace cleanup did not complete")
+
+
+@contextmanager
+def guarded_docs_directory(prefix: str):
+    path, identity = _new_guarded_docs_directory(prefix)
+    try:
+        yield path
+    finally:
+        _remove_guarded_docs_directory(path, identity)
+
+
+def validate_guarded_docs_cwd(path_value: str) -> Path:
+    path = Path(path_value)
+    metadata = path.lstat()
+    root = _guarded_docs_temp_root()
+    if (
+        path.parent.resolve(strict=True) != root.resolve(strict=True)
+        or not path.name.startswith("request-")
+        or not stat.S_ISDIR(metadata.st_mode)
+        or _path_is_reparse(path, metadata)
+        or os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path))
+        or any(path.iterdir())
+    ):
+        raise RuntimeError("Documentation execution requires a fresh platform-owned workspace")
+    return path
 
 
 def flatten_content(content: Any) -> str:
@@ -340,7 +651,25 @@ def routing_capability_snapshot() -> CapabilitySnapshot:
         and ROUTING_CAPABILITY_CACHE[1] == flags
         and monotonic_now - ROUTING_CAPABILITY_CACHE[0] < 5.0
     ):
-        return ROUTING_CAPABILITY_CACHE[2]
+        cached_at, cached_flags, cached_snapshot = ROUTING_CAPABILITY_CACHE
+        statuses = dict(cached_snapshot.statuses)
+        context7_status = managed_mcp_availability("context7")
+        statuses["context7"] = (
+            context7_status
+            if cached_snapshot.status("qwen_code") is AvailabilityStatus.AVAILABLE
+            else AvailabilityStatus.UNAVAILABLE
+        )
+        if statuses == cached_snapshot.statuses:
+            return cached_snapshot
+        refreshed_snapshot = CapabilitySnapshot(
+            statuses=statuses,
+            checked_at=datetime.now(timezone.utc),
+        )
+        # Preserve the listener-probe cache age while refreshing the cheap
+        # managed runtime state.  Circuit transitions must affect the very
+        # next route, not wait for the five-second TCP probe TTL.
+        ROUTING_CAPABILITY_CACHE = (cached_at, cached_flags, refreshed_snapshot)
+        return refreshed_snapshot
     now = datetime.now(timezone.utc)
     fast_listener = tcp_endpoint_reachable(FAST_OLLAMA_BASE_URL)
     strong_listener = tcp_endpoint_reachable(OLLAMA_BASE_URL)
@@ -350,19 +679,24 @@ def routing_capability_snapshot() -> CapabilitySnapshot:
         and strong_listener
         and bool(shutil.which("qwen.cmd") or shutil.which("qwen"))
     )
-    codex_available = ENABLE_CODEX_EXEC and bool(shutil.which("codex.cmd") or shutil.which("codex"))
+    codex_available = ENABLE_CODEX_EXEC and bool(resolve_codex_executable())
     browser_available = (
         bool(shutil.which("node"))
         and (ROOT / "services" / "browser" / "inspect.mjs").is_file()
         and (ROOT / "node_modules" / "playwright" / "package.json").is_file()
     )
+    context7_status = managed_mcp_availability("context7")
     snapshot = CapabilitySnapshot(
         statuses={
             "fast_model": AvailabilityStatus.AVAILABLE if fast_listener else AvailabilityStatus.UNAVAILABLE,
             "strong_model": AvailabilityStatus.AVAILABLE if strong_listener else AvailabilityStatus.UNAVAILABLE,
             "qwen_code": AvailabilityStatus.AVAILABLE if qwen_available else AvailabilityStatus.DISABLED,
             "codex": AvailabilityStatus.AVAILABLE if codex_available else AvailabilityStatus.DISABLED,
-            "context7": AvailabilityStatus.AVAILABLE if qwen_available else AvailabilityStatus.UNAVAILABLE,
+            "context7": (
+                context7_status
+                if qwen_available
+                else AvailabilityStatus.UNAVAILABLE
+            ),
             "browser": AvailabilityStatus.AVAILABLE if browser_available else AvailabilityStatus.UNAVAILABLE,
             "voice": (
                 AvailabilityStatus.AVAILABLE
@@ -376,6 +710,66 @@ def routing_capability_snapshot() -> CapabilitySnapshot:
     )
     ROUTING_CAPABILITY_CACHE = (monotonic_now, flags, snapshot)
     return snapshot
+
+
+def managed_mcp_availability(server_id: str) -> AvailabilityStatus:
+    """Return passive MCP *routability* without starting an MCP process.
+
+    A closed circuit with one or more failures remains probeable.  Reporting
+    that state as degraded health is useful operationally, but treating it as
+    unroutable would prevent the bounded retry/success path from ever closing
+    the failure loop.  Only an open circuit (or a disabled/unavailable source)
+    blocks routing.
+    """
+
+    state, _ = _managed_mcp_runtime_state(server_id)
+    return {
+        "ready": AvailabilityStatus.AVAILABLE,
+        "on_demand": AvailabilityStatus.ON_DEMAND,
+        "degraded": AvailabilityStatus.ON_DEMAND,
+        "circuit_open": AvailabilityStatus.DEGRADED,
+        "disabled": AvailabilityStatus.DISABLED,
+        "unavailable": AvailabilityStatus.UNAVAILABLE,
+    }.get(state, AvailabilityStatus.UNAVAILABLE)
+
+
+def _managed_mcp_runtime_state(server_id: str) -> tuple[str, str]:
+    """Return a bounded runtime state and non-sensitive diagnostic reason."""
+
+    try:
+        server = load_registry().server(server_id)
+        if not server.enabled or server.configured_state == "disabled":
+            return "disabled", "configured_disabled"
+        validate_installed_source(server)
+        runtime = peek_status(server)
+    except (OSError, ValueError, KeyError, ValidationError):
+        return "unavailable", "registry_or_source_unavailable"
+    state = runtime.get("state")
+    reason = runtime.get("last_reason_code")
+    if not isinstance(state, str):
+        return "unavailable", "invalid_runtime_state"
+    if not isinstance(reason, str) or re.fullmatch(r"[a-z0-9_.:-]{1,128}", reason) is None:
+        reason = "invalid_or_redacted_reason"
+    return state, reason
+
+
+def managed_mcp_health_observation(server_id: str) -> tuple[AvailabilityStatus, str]:
+    """Return diagnostic health separately from routing eligibility."""
+
+    state, reason = _managed_mcp_runtime_state(server_id)
+    status = {
+        "ready": AvailabilityStatus.AVAILABLE,
+        "on_demand": AvailabilityStatus.ON_DEMAND,
+        "degraded": AvailabilityStatus.DEGRADED,
+        "circuit_open": AvailabilityStatus.DEGRADED,
+        "disabled": AvailabilityStatus.DISABLED,
+        "unavailable": AvailabilityStatus.UNAVAILABLE,
+    }.get(state, AvailabilityStatus.UNAVAILABLE)
+    detail = (
+        "Passive managed-registry state only; live discovery is owned by doctor/smoke. "
+        f"runtime_state={state}; last_reason_code={reason}."
+    )
+    return status, detail
 
 
 def tcp_endpoint_reachable(url: str, *, timeout: float = 0.08) -> bool:
@@ -413,6 +807,77 @@ def build_route_decision(
     )
 
 
+def build_coding_task_request(
+    *,
+    task_id: str,
+    prompt: str,
+    project: str,
+    decision: RouteDecisionV1,
+    plan: PlanV1,
+) -> CodingTaskRequestV1:
+    """Map the gateway plan into the fail-closed versioned coding contract."""
+
+    if decision.execution_mode not in {ExecutionMode.READ_ONLY, ExecutionMode.WRITE}:
+        raise CodingEngineError("local_code requires an explicit read-only or write execution mode")
+    mode = CodingMode(decision.execution_mode.value)
+    source = resolve_repository(project)
+    try:
+        declared_scope = resolve_declared_coding_scope(
+            prompt,
+            requested_project=Path(project),
+            canonical_root=source.canonical_root,
+            write=(mode is CodingMode.WRITE),
+        )
+    except CodingScopeError as exc:
+        raise CodingRepositoryError(
+            "declared coding path scope is invalid or exceeds the policy limit"
+        ) from exc
+    return CodingTaskRequestV1(
+        task_id=task_id,
+        request_id=decision.request_id,
+        goal=prompt,
+        repository_path=str(source.canonical_root),
+        mode=mode,
+        risk=CodingRisk(decision.risk.value),
+        constraints=list(plan.constraints),
+        acceptance_criteria=list(plan.acceptance_criteria),
+        verification_plan=list(plan.verification_plan),
+        verification_commands=(
+            discover_verification_commands(source.canonical_root)
+            if mode is CodingMode.WRITE
+            else []
+        ),
+        permissions=CodingPermissionsV1(
+            modify_files=(mode is CodingMode.WRITE),
+            local_commit=False,
+            cloud_execution=False,
+            data_classification=DataClassification.INTERNAL,
+        ),
+        route_reasons=list(decision.reason_codes),
+        rule_scope_paths=list(declared_scope.rule_scope_paths),
+        expected_diff_paths=list(declared_scope.expected_diff_paths),
+        forbidden_diff_paths=list(declared_scope.forbidden_diff_paths),
+    )
+
+
+def coding_engine_factory() -> CodingEngine:
+    """Lazily construct one thread-safe gateway engine with the routed model settings."""
+
+    global CODING_ENGINE_INSTANCE
+    if CODING_ENGINE_INSTANCE is not None:
+        return CODING_ENGINE_INSTANCE
+    with CODING_ENGINE_FACTORY_LOCK:
+        if CODING_ENGINE_INSTANCE is None:
+            CODING_ENGINE_INSTANCE = CodingEngine(
+                qwen_executor=QwenExecutor(model=AGENT_MODEL),
+                codex_executor=CodexExecutor(
+                    model=CODEX_MODEL,
+                    reasoning_effort=CODEX_REASONING_EFFORT,
+                ),
+            )
+    return CODING_ENGINE_INSTANCE
+
+
 def run_process(
     command: list[str],
     cwd: str,
@@ -421,11 +886,13 @@ def run_process(
     input_text: str | None = None,
     env_overrides: dict[str, str] | None = None,
 ) -> str:
-    process_env = os.environ.copy()
-    process_env["QWEN_CODE_SUPPRESS_YOLO_WARNING"] = "1"
-    process_env["QWEN_HOME"] = str(ROOT / "config" / "qwen")
-    process_env["NO_COLOR"] = "1"
-    process_env.update(env_overrides or {})
+    explicit_environment = {
+        "QWEN_CODE_SUPPRESS_YOLO_WARNING": "1",
+        "QWEN_HOME": str(ROOT / "config" / "qwen"),
+        "NO_COLOR": "1",
+    }
+    explicit_environment.update(env_overrides or {})
+    process_env = safe_child_environment(explicit_environment)
     process = subprocess.Popen(
         command,
         cwd=cwd,
@@ -437,53 +904,27 @@ def run_process(
         errors="replace",
         env=process_env,
         creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+        start_new_session=(os.name != "nt"),
     )
+    tree_guard = ProcessTreeGuard(process)
     try:
         stdout, stderr = process.communicate(input=input_text, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        terminate_process_tree(process)
+        tree_guard.terminate(include_parent=True)
         try:
             stdout, stderr = process.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
             stdout, stderr = process.communicate()
         raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr) from exc
+    # A successful CLI parent may still have detached stdio MCP descendants.
+    # They remain task-owned and must not outlive this bounded invocation.
+    tree_guard.terminate(include_parent=False)
     combined_output = (stdout + "\n" + stderr).strip()
     if process.returncode != 0:
         raise RuntimeError(f"Command failed ({process.returncode}): {combined_output[-6000:]}")
     output = stdout.strip() if prefer_stdout and stdout.strip() else combined_output
     return output[-20000:]
-
-
-def terminate_process_tree(process: subprocess.Popen[str]) -> None:
-    """Terminate descendants before returning a timed-out worktree/resource lock."""
-
-    try:
-        parent = psutil.Process(process.pid)
-        descendants = parent.children(recursive=True)
-    except (psutil.Error, OSError):
-        descendants = []
-        parent = None
-    for child in reversed(descendants):
-        try:
-            child.terminate()
-        except psutil.Error:
-            pass
-    if parent is not None:
-        try:
-            parent.terminate()
-        except psutil.Error:
-            pass
-    _, alive = psutil.wait_procs([*descendants, *([parent] if parent is not None else [])], timeout=2.0)
-    for member in alive:
-        try:
-            member.kill()
-        except psutil.Error:
-            pass
-    if process.poll() is None:
-        process.kill()
-
-
 def execution_contract(prompt: str, read_only: bool, mode: str = "code") -> str:
     action = (
         "Use Context7 MCP tools now and base the answer on the retrieved current documentation."
@@ -585,19 +1026,11 @@ def normalize_image_prompt(prompt: str) -> str:
 
 
 def prepare_qwen_runtime_home(mode: str) -> Path:
-    """Materialize immutable profile settings into an ignored writable home."""
+    """Generate a validated executor view from the canonical MCP registry."""
 
     profile = "qwen-docs" if mode == "docs" else "qwen-code"
-    source = ROOT / "config" / profile / "settings.json"
-    runtime_home = RUN_DIR / "qwen-homes" / profile
-    runtime_home.mkdir(parents=True, exist_ok=True)
-    target = runtime_home / "settings.json"
-    source_bytes = source.read_bytes()
-    if not target.exists() or target.read_bytes() != source_bytes:
-        temporary = runtime_home / "settings.json.tmp"
-        temporary.write_bytes(source_bytes)
-        temporary.replace(target)
-    return runtime_home
+    target = generate_qwen_views()[profile]
+    return target.parent
 
 
 def run_codex_agent(
@@ -607,12 +1040,15 @@ def run_codex_agent(
     mode: str = "code",
     read_only: bool | None = None,
 ) -> str:
+    codex_executable = resolve_codex_executable()
+    if codex_executable is None:
+        raise RuntimeError("Native Codex executable is unavailable")
     read_only = (mode == "docs" or is_read_only(prompt)) if read_only is None else read_only
     sandbox = "read-only" if read_only else CODEX_SANDBOX
     if cloud and mode == "review":
         review_prompt = execution_contract(prompt, True, mode)
         command = [
-            "codex.cmd", "-C", project, "-m", CODEX_MODEL,
+            codex_executable, "-C", project, "-m", CODEX_MODEL,
             "-c", f'model_reasoning_effort="{CODEX_REASONING_EFFORT}"',
             "-a", "never", "-s", "read-only", "review", "-",
         ]
@@ -636,7 +1072,7 @@ def run_codex_agent(
     task_id = uuid.uuid4().hex[:12]
     output_file = Path(tempfile.gettempdir()) / f"local-agent-{task_id}.txt"
     output_file.unlink(missing_ok=True)
-    command = ["codex.cmd", "exec"]
+    command = [codex_executable, "exec"]
     if cloud:
         command.extend(["-m", CODEX_MODEL, "-c", f'model_reasoning_effort="{CODEX_REASONING_EFFORT}"'])
     if not cloud:
@@ -664,6 +1100,7 @@ def run_qwen_agent(
     model: str = AGENT_MODEL,
     read_only: bool | None = None,
     plan: PlanV1 | None = None,
+    correlation_id: str | None = None,
 ) -> str:
     read_only = (mode == "docs" or is_read_only(prompt)) if read_only is None else read_only
     if plan is not None:
@@ -718,25 +1155,66 @@ def run_qwen_agent(
         "--output-format", "text", "--prompt", "",
     ]
     if mode == "docs":
-        command.extend(["--allowed-mcp-server-names", "context7"])
-    else:
-        command.extend(["--bare", "--auth-type", "openai"])
+        correlation_id = _validated_mcp_correlation_id(correlation_id)
+        validate_guarded_docs_cwd(project)
+        canonical_home = prepare_qwen_runtime_home("docs")
+        canonical_settings = canonical_home / "settings.json"
+        canonical_bytes = canonical_settings.read_bytes()
+        canonical_payload = json.loads(canonical_bytes)
+        if set(canonical_payload.get("mcpServers", {})) != {"context7"}:
+            raise RuntimeError("Generated documentation MCP view is not Context7-only")
+        with (
+            guarded_docs_directory("home-") as isolated_home,
+            guarded_docs_directory("runtime-") as isolated_runtime,
+        ):
+            isolated_settings = isolated_home / "settings.json"
+            with isolated_settings.open("xb") as stream:
+                stream.write(canonical_bytes)
+            if isolated_settings.read_bytes() != canonical_bytes:
+                raise RuntimeError("Isolated documentation MCP settings changed during creation")
+            os.chmod(isolated_settings, stat.S_IRUSR)
+            command.extend(
+                [
+                    "--mcp-config",
+                    str(isolated_settings.resolve(strict=True)),
+                    "--allowed-mcp-server-names",
+                    "context7",
+                    "--core-tools",
+                    _DOCS_CORE_TOOL_SENTINEL,
+                    "--exclude-tools",
+                    ",".join(_DOCS_EXCLUDED_TOOLS),
+                ]
+            )
+            result = run_process(
+                command,
+                project,
+                timeout=1800,
+                input_text=agent_prompt,
+                env_overrides={
+                    "QWEN_HOME": str(isolated_home),
+                    "QWEN_RUNTIME_DIR": str(isolated_runtime),
+                    **(
+                        {_MCP_CORRELATION_ENV: correlation_id}
+                        if correlation_id is not None
+                        else {}
+                    ),
+                },
+            ).strip()
+            return result
+
+    command.extend(["--bare", "--auth-type", "openai"])
     qwen_home = prepare_qwen_runtime_home(mode)
-    qwen_environment = {"QWEN_HOME": str(qwen_home)}
-    if mode != "docs":
-        qwen_environment.update(
-            {
-                "OPENAI_API_KEY": "ollama",
-                "OPENAI_BASE_URL": f"{OLLAMA_BASE_URL.rstrip('/')}/v1",
-                "OPENAI_MODEL": model,
-            }
-        )
     result = run_process(
         command,
         project,
         timeout=1800,
         input_text=agent_prompt,
-        env_overrides=qwen_environment,
+        env_overrides={
+            "QWEN_HOME": str(qwen_home),
+            "OPENAI_API_KEY": "ollama",
+            "OPENAI_BASE_URL": f"{OLLAMA_BASE_URL.rstrip('/')}/v1",
+            "OPENAI_MODEL": model,
+        },
     ).strip()
     return result
 
@@ -1418,7 +1896,8 @@ async def execute_agent(
         command_summaries=[f"{executor.value} bounded invocation"],
     )
     try:
-        async with get_worktree_lock(project):
+        execution_lock = DOCS_EXECUTION_LOCK if mode == "docs" else get_worktree_lock(project)
+        async with execution_lock:
             if cloud:
                 async with CODEX_LOCK:
                     result = await run_blocking_safely(run_codex_agent, prompt, project, True, mode, read_only)
@@ -1433,6 +1912,7 @@ async def execute_agent(
                             model or AGENT_MODEL,
                             read_only,
                             plan,
+                            task_id,
                         )
         if suspicious_agent_result(result):
             raise RuntimeError(f"{executor.value} returned an incomplete result")
@@ -1522,6 +2002,250 @@ async def queued_worktree_lock(
         lock.release()
 
 
+async def _run_coding_engine_safely(
+    engine: CodingEngine,
+    request: CodingTaskRequestV1,
+) -> CodingTaskResultV1:
+    """Propagate async cancellation without abandoning a live engine thread."""
+
+    cancel_event = threading.Event()
+    worker = asyncio.create_task(
+        asyncio.to_thread(engine.run, request, cancel_event=cancel_event)
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancel_event.set()
+        try:
+            await worker
+        except Exception:
+            # The caller's cancellation is authoritative; the worker exception
+            # remains represented in Coding Engine state/artifacts.
+            pass
+        raise
+
+
+async def execute_coding_engine(
+    *,
+    task_id: str,
+    prompt: str,
+    project: str,
+    decision: RouteDecisionV1,
+    plan: PlanV1,
+    engine: CodingEngine | None = None,
+) -> CodingTaskResultV1:
+    """Execute the governed Coding Engine and mirror its terminal state to the gateway journal."""
+
+    coding_request = build_coding_task_request(
+        task_id=task_id,
+        prompt=prompt,
+        project=project,
+        decision=decision,
+        plan=plan,
+    )
+    selected_engine = engine
+
+    def journal_executor(result: CodingTaskResultV1 | None = None) -> ExecutorName:
+        if result is not None and result.final_executor in {
+            ExecutorKind.CODEX_EXEC,
+            ExecutorKind.CODEX_REVIEW,
+        }:
+            return ExecutorName.CODEX_CLI
+        return ExecutorName.QWEN_CODE
+    save_task(
+        task_id,
+        "local_code",
+        "running",
+        prompt,
+        project,
+        route_decision=decision,
+        plan=plan,
+        actual_executor=journal_executor(),
+        actual_model=decision.model,
+        actual_profile=decision.profile,
+        reason_codes=["coding.engine_started"],
+        command_summaries=["coding_engine governed execution"],
+    )
+    try:
+        async with AGENT_LOCK:
+            async with GPU_LOCK:
+                if selected_engine is None:
+                    selected_engine = coding_engine_factory()
+                result = await _run_coding_engine_safely(selected_engine, coding_request)
+    except asyncio.CancelledError:
+        save_task(
+            task_id,
+            "local_code",
+            "cancelled",
+            prompt,
+            project,
+            route_decision=decision,
+            plan=plan,
+            actual_executor=journal_executor(),
+            actual_model=decision.model,
+            actual_profile=decision.profile,
+            reason_codes=["executor.cancelled"],
+        )
+        raise
+    except Exception as exc:
+        error = redact_bounded(f"{type(exc).__name__}: {exc}")
+        save_task(
+            task_id,
+            "local_code",
+            "failed",
+            prompt,
+            project,
+            error,
+            route_decision=decision,
+            plan=plan,
+            actual_executor=journal_executor(),
+            actual_model=decision.model,
+            actual_profile=decision.profile,
+            error_summary=error,
+            reason_codes=["coding.engine_failure"],
+        )
+        raise
+
+    journal_status = {
+        CodingTaskStatus.COMPLETED: "complete",
+        CodingTaskStatus.HANDOFF_READY: "ready",
+        CodingTaskStatus.BLOCKED: "blocked",
+        CodingTaskStatus.FAILED: "failed",
+        CodingTaskStatus.CANCELLED: "cancelled",
+    }.get(result.status)
+    if journal_status is None:
+        error = f"Coding Engine returned non-terminal status {result.status.value}"
+        save_task(
+            task_id,
+            "local_code",
+            "failed",
+            prompt,
+            project,
+            error,
+            route_decision=decision,
+            plan=plan,
+            actual_executor=journal_executor(),
+            actual_model=decision.model,
+            actual_profile=decision.profile,
+            error_summary=error,
+            reason_codes=["coding.invalid_terminal_status"],
+        )
+        raise CodingEngineError(error)
+    handoff_ready = result.status is CodingTaskStatus.HANDOFF_READY
+    if handoff_ready:
+        artifact_refs = result.artifact_paths[-128:]
+        # Close the mirrored local attempt before projecting the ready fallback;
+        # the Coding Engine database remains the authoritative per-attempt log.
+        save_task(
+            task_id,
+            "local_code",
+            "failed",
+            prompt,
+            project,
+            result.summary,
+            route_decision=decision,
+            plan=plan,
+            actual_executor=journal_executor(result),
+            actual_model=result.final_model or decision.model,
+            actual_profile=decision.profile,
+            error_summary=result.summary,
+            reason_codes=["failure.local_attempt_limit"],
+            modified_files=result.modified_files,
+            artifact_refs=artifact_refs,
+            worktree_path=result.worktree_path,
+        )
+        save_task(
+            task_id,
+            "codex_bundle",
+            "ready",
+            prompt,
+            project,
+            result.summary,
+            {"bundle": result.handoff_path, "handoff": result.handoff_path},
+            route_decision=decision,
+            plan=plan,
+            actual_executor=ExecutorName.CODEX_BUNDLE,
+            actual_model=decision.model,
+            actual_profile=decision.profile,
+            fallback_used=True,
+            error_summary=result.summary,
+            reason_codes=["failure.local_attempt_limit", "fallback.codex_handoff"],
+            modified_files=result.modified_files,
+            artifact_refs=artifact_refs,
+            worktree_path=result.worktree_path,
+        )
+        return result
+    if result.status is CodingTaskStatus.BLOCKED:
+        terminal_kwargs = {
+            "route_decision": decision,
+            "plan": plan,
+            "actual_executor": journal_executor(result),
+            "actual_model": result.final_model or decision.model,
+            "actual_profile": decision.profile,
+            "error_summary": result.summary,
+            "reason_codes": ["coding.blocked"],
+            "modified_files": result.modified_files,
+            "artifact_refs": result.artifact_paths[-128:],
+            "worktree_path": result.worktree_path,
+        }
+        save_task(
+            task_id,
+            "local_code",
+            "failed",
+            prompt,
+            project,
+            result.summary,
+            **terminal_kwargs,
+        )
+        save_task(
+            task_id,
+            "local_code",
+            "blocked",
+            prompt,
+            project,
+            result.summary,
+            **terminal_kwargs,
+        )
+        return result
+    save_task(
+        task_id,
+        "local_code",
+        journal_status,
+        prompt,
+        project,
+        result.summary,
+        None,
+        route_decision=decision,
+        plan=plan,
+        actual_executor=journal_executor(result),
+        actual_model=result.final_model or decision.model,
+        actual_profile=decision.profile,
+        fallback_used=False,
+        error_summary=(
+            result.summary if result.status is CodingTaskStatus.FAILED else None
+        ),
+        reason_codes=[
+            "coding.review_findings_delivered"
+            if (
+                result.status is CodingTaskStatus.COMPLETED
+                and result.review_verdict is ReviewVerdict.REJECTED
+                and result.review_findings_count > 0
+            )
+            else "coding.completed"
+            if result.status is CodingTaskStatus.COMPLETED
+            else "executor.cancelled"
+            if result.status is CodingTaskStatus.CANCELLED
+            else "coding.failed"
+        ],
+        modified_files=result.modified_files,
+        # The gateway TaskState contract is intentionally smaller than the
+        # engine artifact registry; retain the newest terminal evidence.
+        artifact_refs=result.artifact_paths[-128:],
+        worktree_path=result.worktree_path,
+    )
+    return result
+
+
 async def execute_local_coding(
     *,
     task_id: str,
@@ -1530,7 +2254,7 @@ async def execute_local_coding(
     decision: RouteDecisionV1,
     plan: PlanV1,
 ) -> tuple[str | None, Path | None, list[str]]:
-    """Run two explicit local strategies, then create one lossless Codex handoff."""
+    """Legacy retry path retained for compatibility tests; production uses CodingEngine."""
 
     failures: list[str] = []
     commands: list[str] = []
@@ -1789,6 +2513,25 @@ async def collect_gateway_health():
             ),
         )
 
+    mcp_status_map = {
+        AvailabilityStatus.AVAILABLE: CapabilityStatus.OK,
+        AvailabilityStatus.DEGRADED: CapabilityStatus.DEGRADED,
+        AvailabilityStatus.UNAVAILABLE: CapabilityStatus.UNAVAILABLE,
+        AvailabilityStatus.DISABLED: CapabilityStatus.DISABLED,
+        AvailabilityStatus.ON_DEMAND: CapabilityStatus.ON_DEMAND,
+    }
+    managed_mcp_capabilities = []
+    for server_id in ("context7", "playwright", "local-diagnostics"):
+        health_status, health_detail = managed_mcp_health_observation(server_id)
+        managed_mcp_capabilities.append(
+            CapabilityHealthV1(
+                name=f"mcp_{server_id.replace('-', '_')}",
+                required=False,
+                status=mcp_status_map[health_status],
+                detail=health_detail,
+                checked_at=checked_at,
+            )
+        )
     optional_capabilities = [
         CapabilityHealthV1(
             name="qwen_code_cli",
@@ -1814,7 +2557,7 @@ async def collect_gateway_health():
                 CapabilityStatus.DISABLED
                 if not ENABLE_CODEX_EXEC
                 else CapabilityStatus.OK
-                if (shutil.which("codex.cmd") or shutil.which("codex"))
+                if resolve_codex_executable()
                 else CapabilityStatus.UNAVAILABLE
             ),
             detail=(
@@ -1866,7 +2609,14 @@ async def collect_gateway_health():
             checked_at=checked_at,
         ),
     ]
-    capabilities = [database_health, fast_health, strong_health, voice_health, *optional_capabilities]
+    capabilities = [
+        database_health,
+        fast_health,
+        strong_health,
+        voice_health,
+        *managed_mcp_capabilities,
+        *optional_capabilities,
+    ]
     return aggregate_health("gateway", capabilities, live=True, checked_at=checked_at)
 
 
@@ -2144,56 +2894,132 @@ async def chat(request: ChatRequest):
 
     if route == "local_code":
         assert project is not None and plan is not None
-        result, bundle, failures = await execute_local_coding(
-            task_id=task_id,
-            prompt=prompt,
-            project=project,
-            decision=decision,
-            plan=plan,
-        )
-        if result is not None:
-            return openai_response(result, route, request.stream, request_id=task_id, plan=plan)
-        assert bundle is not None
-        return openai_error_response(
-            message=f"Две локальные попытки не прошли; один Codex handoff сохранён: {bundle}",
-            code="failure.local_attempt_limit",
-            route="codex_bundle",
-            request_id=task_id,
-            status_code=502,
-            decision=decision,
-            plan=plan,
-        )
-
-    if route == "docs":
-        assert plan is not None
-        docs_project = project
-        if docs_project is None:
-            docs_workspace = RUN_DIR / "docs-workspace"
-            docs_workspace.mkdir(parents=True, exist_ok=True)
-            docs_project = str(docs_workspace)
         try:
-            result = await execute_agent(
-                task_id,
-                route,
-                prompt,
-                docs_project,
-                cloud=False,
-                mode="docs",
+            coding_result = await execute_coding_engine(
+                task_id=task_id,
+                prompt=prompt,
+                project=project,
                 decision=decision,
                 plan=plan,
             )
-            return openai_response(result, route, request.stream, request_id=task_id, plan=plan)
-        except Exception as exc:
-            error = redact_bounded(str(exc))
+        except asyncio.CancelledError:
+            raise
+        except CodingRepositoryError as exc:
             return openai_error_response(
-                message=f"Context7 worker завершился ошибкой: {error}",
-                code="executor.context7_failure",
+                message=redact_bounded(str(exc)),
+                code="coding.repository_invalid",
+                route=route,
+                request_id=task_id,
+                status_code=422,
+                decision=decision,
+                plan=plan,
+            )
+        except Exception as exc:
+            return openai_error_response(
+                message=redact_bounded(f"{type(exc).__name__}: {exc}"),
+                code="coding.engine_failure",
                 route=route,
                 request_id=task_id,
                 status_code=502,
                 decision=decision,
                 plan=plan,
             )
+        if coding_result.status is CodingTaskStatus.COMPLETED:
+            details = [coding_result.summary]
+            if coding_result.worktree_path:
+                details.append(f"Worktree: {coding_result.worktree_path}")
+            if coding_result.modified_files:
+                details.append("Modified: " + ", ".join(coding_result.modified_files))
+            details.append(
+                "Verification: "
+                + ("passed" if coding_result.verification_passed else "not passed")
+            )
+            if coding_result.review_verdict is ReviewVerdict.REJECTED:
+                details.append(
+                    "Review: findings delivered ("
+                    f"{coding_result.review_findings_count}; code-change verdict rejected)"
+                )
+            elif coding_result.review_verdict is not None:
+                details.append(f"Review: {coding_result.review_verdict.value}")
+            if coding_result.commit_sha:
+                details.append(f"Local commit: {coding_result.commit_sha}")
+            return openai_response(
+                "\n\n".join(details),
+                route,
+                request.stream,
+                request_id=task_id,
+                plan=plan,
+            )
+        if coding_result.status is CodingTaskStatus.HANDOFF_READY:
+            return openai_error_response(
+                message=(
+                    "Bounded local attempts stopped; a resumable Codex handoff is ready: "
+                    f"{coding_result.handoff_path}"
+                ),
+                code="failure.local_attempt_limit",
+                route="codex_bundle",
+                request_id=task_id,
+                status_code=502,
+                decision=decision,
+                plan=plan,
+            )
+        status_code = (
+            409
+            if coding_result.status
+            in {CodingTaskStatus.BLOCKED, CodingTaskStatus.CANCELLED}
+            else 502
+        )
+        return openai_error_response(
+            message=coding_result.summary,
+            code=f"coding.{coding_result.status.value}",
+            route=route,
+            request_id=task_id,
+            status_code=status_code,
+            decision=decision,
+            plan=plan,
+        )
+
+    if route == "docs":
+        assert plan is not None
+        external_request, external_plan = prepare_public_docs_execution(normalized)
+        external_prompt = external_request.user_message
+        external_decision = decision.model_copy(update={"project": None})
+        # Qwen merges workspace settings.  A fresh platform-owned cwd prevents
+        # repository `.qwen/settings.json` from becoming an MCP consumer.
+        docs_workspace, docs_workspace_identity = _new_guarded_docs_directory("request-")
+        docs_project = str(docs_workspace)
+        try:
+            try:
+                result = await execute_agent(
+                    task_id,
+                    route,
+                    external_prompt,
+                    docs_project,
+                    cloud=False,
+                    mode="docs",
+                    decision=external_decision,
+                    plan=external_plan,
+                )
+                return openai_response(
+                    result,
+                    route,
+                    request.stream,
+                    request_id=task_id,
+                    plan=external_plan,
+                )
+            except Exception as exc:
+                error = redact_bounded(str(exc))
+                return openai_error_response(
+                    message=f"Context7 worker завершился ошибкой: {error}",
+                    code="executor.context7_failure",
+                    route=route,
+                    request_id=task_id,
+                    status_code=502,
+                    decision=external_decision,
+                    plan=external_plan,
+                )
+        finally:
+            _remove_guarded_docs_directory(docs_workspace, docs_workspace_identity)
 
     if route == "voice":
         assert plan is not None
