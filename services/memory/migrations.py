@@ -46,7 +46,11 @@ try {
     }
 
     $stage = 'read'
-    $acl = Get-Acl -LiteralPath $target
+    if ($kind -eq 'directory') {
+        $acl = [IO.Directory]::GetAccessControl($target)
+    } else {
+        $acl = [IO.File]::GetAccessControl($target)
+    }
     $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
     if ($ownerSid.Value -ne $currentSid.Value) {
         throw 'private path is not owned by the current identity'
@@ -92,7 +96,11 @@ try {
     }
 
     $stage = 'verify'
-    $observed = Get-Acl -LiteralPath $target
+    if ($kind -eq 'directory') {
+        $observed = [IO.Directory]::GetAccessControl($target)
+    } else {
+        $observed = [IO.File]::GetAccessControl($target)
+    }
     $observedOwner = $observed.GetOwner(
         [Security.Principal.SecurityIdentifier]
     )

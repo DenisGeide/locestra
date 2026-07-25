@@ -549,7 +549,11 @@ def test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance(
             r"""
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 foreach ($target in $env:LOCAL_AGENT_ACL_TARGETS.Split([IO.Path]::PathSeparator)) {
-    $acl = Get-Acl -LiteralPath $target
+    if ([IO.Directory]::Exists($target)) {
+        $acl = [IO.Directory]::GetAccessControl($target)
+    } else {
+        $acl = [IO.File]::GetAccessControl($target)
+    }
     $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier])
     if ($ownerSid.Value -ne $currentSid.Value) { exit 6 }
     $rules = @(
