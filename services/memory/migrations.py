@@ -4,6 +4,7 @@ import base64
 import hashlib
 import inspect
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -125,10 +126,9 @@ try {
         throw 'private DACL rule verification failed'
     }
 } catch {
+    $exceptionType = $_.Exception.GetType().FullName
     [Console]::Error.WriteLine(
-        'LOCESTRA_ACL_ERROR stage={0} type={1}' -f
-            $stage,
-            $_.Exception.GetType().FullName
+        "LOCESTRA_ACL_ERROR stage=$stage type=$exceptionType"
     )
     $exitCode = switch ($stage) {
         'input' { 41 }
@@ -187,17 +187,17 @@ def _restrict_private_path(path: str | Path, *, directory: bool) -> Path:
                     46: "verify",
                     49: "unknown",
                 }.get(hardened.returncode, "payload")
-                marker = "LOCESTRA_ACL_ERROR "
-                reported = next(
-                    (
-                        line[line.index(marker) :].strip()[:200]
-                        for line in hardened.stderr.splitlines()
-                        if marker in line
-                    ),
-                    "",
+                reported = re.search(
+                    r"LOCESTRA_ACL_ERROR "
+                    r"stage=(input|identity|read|replace|write|verify|unknown) "
+                    r"type=([A-Za-z0-9_.+]+)",
+                    hardened.stderr,
                 )
-                detail = reported or (
-                    f"LOCESTRA_ACL_ERROR stage={stage} type=unreported"
+                exception_type = (
+                    reported.group(2)[:120] if reported is not None else "unreported"
+                )
+                detail = (
+                    f"LOCESTRA_ACL_ERROR stage={stage} type={exception_type}"
                 )
                 raise OSError(f"Windows ACL update failed ({detail})")
     except Exception as exc:

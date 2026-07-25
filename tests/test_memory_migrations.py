@@ -574,3 +574,33 @@ foreach ($target in $env:LOCAL_AGENT_ACL_TARGETS.Split([IO.Path]::PathSeparator)
         timeout=30,
     )
     assert verification.returncode == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows DACL regression")
+def test_private_acl_failure_diagnostic_is_bounded_and_path_free(
+    tmp_path: Path,
+) -> None:
+    environment = os.environ.copy()
+    synthetic_path = str(tmp_path / "must-not-appear")
+    environment["LOCAL_AGENT_PRIVATE_PATH"] = synthetic_path
+    environment["LOCAL_AGENT_PRIVATE_KIND"] = "invalid"
+
+    failed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-EncodedCommand",
+            memory_migrations._WINDOWS_PRIVATE_DACL_ENCODED,
+        ],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=30,
+    )
+
+    assert failed.returncode == 41
+    assert "LOCESTRA_ACL_ERROR stage=input type=" in failed.stderr
+    assert synthetic_path not in failed.stderr

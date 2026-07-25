@@ -48,7 +48,8 @@ jobs:
       - name: Verify owner-only Windows ACL hardening
         run: |
           uv run pytest -q -p no:cacheprovider `
-            tests/test_memory_migrations.py::test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance
+            tests/test_memory_migrations.py::test_private_acl_replaces_explicit_broad_grants_and_safe_inheritance `
+            tests/test_memory_migrations.py::test_private_acl_failure_diagnostic_is_bounded_and_path_free
 
       - name: Run portable Coding Engine and MCP Hub gate
         run: |
